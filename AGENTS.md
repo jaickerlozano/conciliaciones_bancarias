@@ -127,6 +127,9 @@ Diferencia               = saldo final de la cartola − saldo según conciliaci
 - Cada banco/formato de cartola = una subclase de `ParserCartola` registrada con `@registrar`
   (ver skill `agregar-banco`).
 - Tipado completo; `from __future__ import annotations`; dataclasses para el dominio.
+- **Finales de línea LF y UTF-8** en todo el repo (`.gitattributes` + `.editorconfig`). Al escribir
+  archivos desde Python usar `newline="
+"` (en Windows `write_text` convierte a CRLF).
 
 ## 7. Datos del cliente (confidencial)
 
