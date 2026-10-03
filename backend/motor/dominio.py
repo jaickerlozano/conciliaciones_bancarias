@@ -89,11 +89,6 @@ class MovimientoBancario:
         """Efecto sobre el saldo del banco: abonos positivos, cargos negativos."""
         return -self.monto if self.es_cargo else self.monto
 
-    @property
-    def huella(self) -> tuple:
-        """Identifica el mismo movimiento aunque venga en dos cartolas distintas."""
-        return (self.fecha, self.monto, self.es_cargo, self.documento.strip(), self.descripcion)
-
 
 @dataclass
 class Cartola:

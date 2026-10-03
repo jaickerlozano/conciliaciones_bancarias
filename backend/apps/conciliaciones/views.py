@@ -13,6 +13,7 @@ from apps.conciliaciones.serializers import (
     CrearConciliacionSerializer,
     CruceManualSerializer,
     ReabrirSerializer,
+    RedondeoSerializer,
     SubirArchivoSerializer,
 )
 from motor.dominio import Periodo
@@ -34,6 +35,7 @@ class ConciliacionViewSet(
     POST   /api/conciliaciones/ID/cruces/          {partida, movimiento}  (cruce manual)
     POST   /api/conciliaciones/ID/cruces/CID/confirmar/
     DELETE /api/conciliaciones/ID/cruces/CID/
+    POST   /api/conciliaciones/ID/redondeo/        {monto}
     POST   /api/conciliaciones/ID/cerrar/
     POST   /api/conciliaciones/ID/reabrir/         {motivo}
     """
@@ -110,6 +112,13 @@ class ConciliacionViewSet(
         conciliacion = cruce.conciliacion
         servicios.deshacer_cruce(cruce, request.user)
         return self._detalle(conciliacion)
+
+    @action(detail=True, methods=["post"])
+    def redondeo(self, request, pk=None):
+        datos = RedondeoSerializer(data=request.data)
+        datos.is_valid(raise_exception=True)
+        monto = datos.validated_data["monto"]
+        return self._detalle(servicios.ajustar_redondeo(self.get_object(), monto, request.user))
 
     @action(detail=True, methods=["post"])
     def cerrar(self, request, pk=None):

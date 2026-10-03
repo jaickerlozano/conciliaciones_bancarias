@@ -92,3 +92,17 @@ def test_fuera_de_ventana_no_cruza():
 def test_ingreso_no_cruza_con_cargo():
     r = cruzar([], [ingreso(1, 50_000, date(2026, 5, 5))], [cargo(50_000, fecha=date(2026, 5, 5))])
     assert r.cruces == []
+
+
+def test_cheque_truncado_en_la_cartola_cruza_si_el_monto_es_igual():
+    e = egreso(1, 1_379_448, cheque="1587109")
+    distinto = cargo(1_379_000, doc="87109")
+    igual = cargo(1_379_448, doc="87109")
+    r = cruzar([e], [], [distinto, igual])
+    assert r.cruces[0].movimiento is igual
+    assert r.cruces[0].tipo == TipoCruce.CHEQUE
+
+
+def test_terminacion_corta_no_cruza_por_cheque():
+    r = cruzar([egreso(1, 10_000, cheque="1587109")], [], [cargo(10_000, doc="109")])
+    assert r.cruces[0].tipo != TipoCruce.CHEQUE

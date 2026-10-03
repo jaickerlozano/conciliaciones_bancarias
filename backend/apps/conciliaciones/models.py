@@ -201,6 +201,7 @@ class AccionEvento(models.TextChoices):
     CRUCE_CONFIRMADO = "cruce_confirmado", "Cruce confirmado"
     CRUCE_DESHECHO = "cruce_deshecho", "Cruce deshecho"
     CRUCE_MANUAL = "cruce_manual", "Cruce manual"
+    REDONDEO = "redondeo", "Redondeo ajustado"
     CERRADA = "cerrada", "Cerrada"
     REABIERTA = "reabierta", "Reabierta"
 

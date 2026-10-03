@@ -15,6 +15,8 @@ varias). Los archivos reales NO se copian al repo (ver AGENTS.md §7).
   - Texto `(cid:NN)` → fuente codificada: **no soportar**; pedir otro formato.
   - Texto OK → volcar `extract_words()` con `x0/x1/top` para ubicar columnas
     (ver cómo lo hace `motor/parsers/cartolas/santander_pdf.py`).
+- Si el formato no se puede leer (escaneado, fuente codificada), el respaldo es la **plantilla
+  estándar** (`motor/parsers/cartolas/plantilla.py`): no hace falta un parser nuevo.
 - Excel/CSV: ubicar la fila de encabezados y los nombres de columnas (fecha, descripción,
   nº documento, cargo/abono o monto con signo, saldo).
 - Identificar: nº de cuenta, período desde/hasta, saldo inicial y saldo final, y cómo se

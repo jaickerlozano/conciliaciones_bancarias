@@ -94,3 +94,35 @@ def test_descarta_movimientos_repetidos_de_cartolas_traslapadas():
     assert r.cuadra
     assert len(r.advertencias) == 1 and "traslapa" in r.advertencias[0]
     assert r.estado_cierre().movimientos_cartola_anterior == cartola.movimientos
+
+
+def test_repetido_con_fecha_y_descripcion_distintas_entre_formatos():
+    """La consulta de enero fecha un abono el 31/01; la cartola oficial de febrero, el 02/02."""
+    from motor.conciliacion import descartar_repetidos
+
+    enero = [
+        MovimientoBancario(date(2026, 1, 31), "Transf. Fondos desde", 351_821, False),
+        MovimientoBancario(date(2026, 2, 2), "Cheque Canje", 66_010, True, "001587059"),
+    ]
+    febrero = [
+        MovimientoBancario(date(2026, 2, 2), "0106472769 Transf. Rodrigo", 351_821, False),
+        MovimientoBancario(date(2026, 2, 2), "Cheque Canje Recibido", 66_010, True, "1587059"),
+        MovimientoBancario(date(2026, 2, 2), "Cheque Canje Recibido", 66_010, True, "1587060"),
+    ]
+    nuevos, repetidos = descartar_repetidos(febrero, enero)
+    assert repetidos == febrero[:2]
+    assert nuevos == [febrero[2]]  # mismo monto pero otro cheque
+
+
+def test_no_busca_repetidos_si_la_cartola_continua():
+    pago = MovimientoBancario(date(2026, 3, 2), "Transf. depto 41", 272_473, False)
+    apertura = EstadoApertura(
+        saldo_registro=1_000_000, saldo_banco=1_000_000,
+        movimientos_cartola_anterior=[
+            MovimientoBancario(date(2026, 2, 27), "Transf. depto 42", 272_473, False)
+        ],
+    )  # fmt: skip
+    cartola = _cartola(1_000_000, [pago], hasta=date(2026, 3, 31))
+    r = conciliar(Periodo(2026, 3), apertura, [], [], cartola)
+    assert r.movimientos_descartados == []
+    assert r.movimientos_no_contabilizados == [pago]

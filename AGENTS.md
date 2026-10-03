@@ -13,7 +13,12 @@ App web para que Gaudi Administraciones (administra comunidades/edificios en Chi
 3. **Cartola** bancaria del mes (PDF oficial o Excel/CSV del banco).
 
 Salida: conciliación en pantalla + descarga en **PDF** y en **Excel** (botones separados).
-Usuarios: ~3 internos de Gaudi. Muchas comunidades, cada una con su banco (Santander, BCI,
+Usuarios: ~3 internos de Gaudi.
+
+**Interfaz:** el personal usa **solo el panel React** (fase 3): CRUD y filtro de comunidades,
+cuentas y todo el flujo mensual, en español y guiado paso a paso. El **admin de Django es solo
+para el superusuario** (desarrollador): gestión de usuarios y soporte. El personal se crea como
+usuario normal (`is_staff=False`), sin acceso a `/admin`. Muchas comunidades, cada una con su banco (Santander, BCI,
 Banco de Chile, …). Piloto: **Comunidad Edificio CINEMA** (Santander, cta 0-000-03-81745-8).
 
 Por ahora las planillas Excel del cliente siguen siendo la fuente de datos. Más adelante
@@ -25,6 +30,7 @@ ingresos/egresos se registrarán directamente en el sistema.
 |---|---|---|
 | 1 | Motor puro Python: parsers + cruce + cálculo. Criterio: reproducir mayo 2026 con diferencia 0 | ✅ Hecho |
 | 2 | Backend Django + DRF + PostgreSQL: modelos, carga de archivos, API, login | ✅ Hecho |
+| 2b | Simulación ene→may 2026 vs. conciliaciones del cliente: los 5 meses iguales, dif. $0 | ✅ Hecho |
 | 3 | Frontend React: carga mensual, mesa de trabajo de cruces, vista de conciliación | Pendiente |
 | 4 | Salidas: PDF (WeasyPrint) y Excel (openpyxl) | Pendiente |
 | 5 | Más bancos y comunidades (pruebas antes de producción) | Pendiente |
@@ -61,10 +67,12 @@ conciliaciones_bancarias/
 │   │   ├── cruce.py           # algoritmo de cruce libro <-> banco
 │   │   ├── conciliacion.py    # cálculo de la conciliación
 │   │   ├── cli.py             # `python -m motor.cli` para probar sin servidor
+│   │   ├── simular.py         # `python -m motor.simular`: encadena meses y compara con el cliente
 │   │   └── parsers/
 │   │       ├── libros.py               # planillas de ingresos/egresos
 │   │       ├── conciliacion_cliente.py # hoja de conciliación manual (estado inicial)
 │   │       └── cartolas/               # un módulo por banco/formato + base.py (registro)
+│   │           └── plantilla.py            # plantilla estándar Excel (respaldo universal)
 │   ├── config/            # proyecto Django: settings (vía .env), urls, excepciones -> 400
 │   ├── apps/
 │   │   ├── autenticacion/     # login/logout/yo/csrf por sesión
@@ -106,15 +114,17 @@ Las vistas **no** contienen reglas de negocio: todo pasa por `apps/conciliacione
 |---|---|---|
 | GET | `auth/csrf/` | Setea cookie `csrftoken` (enviarla en `X-CSRFToken`) |
 | POST | `auth/login/` `{usuario, clave}` · `auth/logout/` · GET `auth/yo/` | Sesión |
-| CRUD | `comunidades/`, `cuentas/?comunidad=ID` | Maestros |
+| CRUD | `comunidades/?q=texto&activa=true`, `cuentas/?comunidad=ID` | Maestros (con búsqueda) |
 | POST | `cuentas/hojas/` (multipart `archivo`) | Lista hojas de una planilla de conciliación |
 | POST | `cuentas/ID/apertura/` (multipart `archivo, hoja, periodo`) | Importa saldo inicial |
+| POST | `cuentas/ID/apertura-manual/` `{periodo, saldo_registro, saldo_banco, cheques_pendientes[], depositos_pendientes[], movimientos_no_contabilizados[]}` | Saldo inicial manual (movimientos: abono +, cargo −) |
 | GET/POST | `conciliaciones/?cuenta=ID` · `{cuenta, periodo:"AAAA-MM"}` | Listar / crear |
 | GET/DELETE | `conciliaciones/ID/` | Detalle completo / eliminar |
 | POST | `conciliaciones/ID/archivos/` (multipart `tipo, archivo`) | `ingresos`, `egresos`, `cartola` |
 | POST | `conciliaciones/ID/procesar/` | Corre el motor y guarda resultados |
 | POST | `conciliaciones/ID/cruces/` `{partida, movimiento}` | Cruce manual |
 | POST/DELETE | `conciliaciones/ID/cruces/CID/confirmar/` · `conciliaciones/ID/cruces/CID/` | Confirmar / deshacer |
+| POST | `conciliaciones/ID/redondeo/` `{monto}` | Ajuste por redondeo (±$100) |
 | POST | `conciliaciones/ID/cerrar/` · `conciliaciones/ID/reabrir/` `{motivo}` | Cierre |
 
 ## 5. Reglas de negocio de la conciliación (fuente de verdad)
@@ -136,14 +146,20 @@ Diferencia               = saldo final de la cartola − saldo según conciliaci
   un abono no contabilizado de enero.
 - **Cruce, en capas:**
   1. Egreso con nº de cheque ↔ cargo cuyo `N° DCTO` es ese cheque (exacto). Si el monto difiere, se cruza con nota.
+     Si la cartola trunca el nº (ej. `87109` por `1587109`), se acepta la terminación de ≥ 5 dígitos solo con monto idéntico.
   2. Egresos sin cheque (PAC, transferencias) ↔ cargos restantes, por monto y fecha.
   3. Ingresos ↔ abonos, por monto y fecha.
   En 2 y 3, por cada monto se maximiza el nº de pares y luego se minimiza la suma de días
   (ventana 60 días). Es `SUGERIDO` (requiere confirmación del usuario) si sobran partidas o movimientos de ese monto
   o si la diferencia supera 7 días; si no, es automático.
 - **Continuidad:** el saldo inicial de la cartola debe coincidir con el saldo final de la anterior.
-  Si no, advertir (falta una cartola o se traslapan; ver febrero 2026). En fase 2: deduplicar
-  movimientos repetidos entre cartolas traslapadas.
+- **Cartolas traslapadas** (febrero 2026 empieza el 30/01 y repite movimientos de enero): solo si
+  la cartola NO continúa desde el saldo anterior, se descartan los movimientos que ya venían en la
+  cartola anterior. Mismo movimiento = mismo monto y sentido, mismo nº de documento si ambos lo
+  traen, y fecha a ±5 días (los formatos difieren en descripción y en fecha operación/contable).
+  Si aun así no calza el saldo, se advierte.
+- **Redondeo:** ajuste manual de hasta ±$100 para absorber decimales (cuotas en UF). El cliente lo
+  usa (ej. +$1 en enero 2026). Queda en la bitácora.
 - **Validación de cartola:** saldo inicial + Σ movimientos = saldo final; si no, advertir.
 - Comprobantes con monto 0 ("NULO") se ignoran. Concepto `INGRESO`/`INGRESOS`, `EGRESO`/`EGRESOS`.
 - Una conciliación aprobada queda **cerrada** (inmutable, con usuario y fecha); su estado de cierre
@@ -155,8 +171,10 @@ Diferencia               = saldo final de la cartola − saldo según conciliaci
 - Si se sube un archivo nuevo a una conciliación procesada, sus resultados se borran (hay que
   volver a procesar).
 - La cartola debe ser del banco y nº de cuenta de la `CuentaBancaria` que se concilia.
-- Al incorporar una comunidad, el estado inicial se importa desde la última hoja de su planilla
-  "CONCILIACIÓN MENSUAL" (`parsers/conciliacion_cliente.py`).
+- **Saldo inicial** de una cuenta (una sola vez, antes del primer mes): (a) **manual** —
+  saldo según registro, saldo banco y la lista de pendientes; debe cuadrar exacto o no se guarda
+  (opción recomendada para cuentas nuevas), o (b) **importado** desde la última hoja de la planilla
+  "CONCILIACIÓN MENSUAL" del cliente (`parsers/conciliacion_cliente.py`).
 
 ## 6. Convenciones de código
 
@@ -193,11 +211,16 @@ Diferencia               = saldo final de la cartola − saldo según conciliaci
 | Archivo | Formato | Estado |
 |---|---|---|
 | feb, may 2026 | Cartola oficial PDF (texto) | ✅ `SantanderPDFOficial` |
-| mar 2026 | Listado "movimientos" del portal (PDF) | ❌ no soportado aún |
-| abr 2026 | PDF con fuente codificada (texto ilegible `(cid:..)`) | ❌ no procesable |
-| ene 2026 | PDF escaneado (imagen) | ❌ no procesable (requeriría OCR) |
+| mar 2026 | "Cartola Histórica" del portal (PDF sin saldos ni signo) | ❌ no soportado → plantilla estándar |
+| abr 2026 | "Cartola Histórica" con fuente sin mapa de caracteres (texto `(cid:..)`) | ❌ → plantilla estándar |
+| ene 2026 | "Consulta de movimientos" impresa como trazos vectoriales (sin texto) | ❌ → plantilla estándar |
+| cualquiera | **Plantilla estándar Excel** (`CARTOLA ESTÁNDAR`) | ✅ `PlantillaEstandar` |
 
-Se pidió al cliente usar siempre **Excel/CSV del portal** o la **cartola oficial PDF**.
+Enero, marzo y abril se convirtieron una vez a plantilla estándar (verificadas fila a fila contra
+los saldos del banco) y están en `../ingresos_egresos_cartolas/cartolas_estandar/`.
+Se pidió al cliente usar siempre **Excel/CSV del portal** o la **cartola oficial PDF**. Para
+bancos/formatos no soportados, la **plantilla estándar** es el respaldo (el usuario copia ahí los
+movimientos); `escribir_plantilla()` genera la plantilla vacía para descargar.
 En las transferencias, la descripción trae el RUT del pagador (ej. `0106472769`): servirá para
 asociar RUT ↔ depto y automatizar el cruce de ingresos.
 
@@ -217,6 +240,14 @@ uv run python -m motor.cli --periodo 2026-05 \
   --apertura "../../ingresos_egresos_cartolas/CONCILIACIÓN  MENSUAL CINEMA.xlsm" \
   --hoja-apertura "ABRIL´26"
 
+# Simulación enero→mayo 2026 contra las conciliaciones del cliente (desde backend/)
+uv run python -m motor.simular --datos ../../ingresos_egresos_cartolas \
+  --planilla "CONCILIACIÓN  MENSUAL CINEMA.xlsm" --ingresos "listado ingresos CINEMA2.xlsx" \
+  --egresos "emitir egresos CINEMA.xlsm" --desde 2026-01 --hasta 2026-05 \
+  --cartola 2026-01=cartolas_estandar/cartola_enero_2026.xlsx --cartola 2026-02=cartola_febrero_2026.pdf \
+  --cartola 2026-03=cartolas_estandar/cartola_marzo_2026.xlsx \
+  --cartola 2026-04=cartolas_estandar/cartola_abril_2026.xlsx --cartola 2026-05=cartola_mayo_2026.pdf
+
 # Base de datos (desde la raíz; requiere Docker Desktop corriendo)
 cp .env.example .env                      # primera vez
 docker compose up -d db                   # Postgres en localhost:5432
@@ -225,7 +256,7 @@ docker compose up --build                 # alternativa: db + backend en contene
 # Django (desde backend/)
 uv run python manage.py migrate
 uv run python manage.py createsuperuser   # crear los usuarios (o desde /admin)
-uv run python manage.py demo_cinema       # carga el piloto: abril importado + mayo procesado
+uv run python manage.py demo_cinema --reiniciar  # piloto: dic-25 importado, ene–abr cerrados, may abierto
 uv run python manage.py runserver         # http://localhost:8000/admin y /api/
 uv run python manage.py makemigrations    # tras cambiar modelos
 
@@ -254,8 +285,7 @@ En Windows la consola necesita `PYTHONIOENCODING=utf-8` para imprimir tildes des
 
 ## 10. Decisiones abiertas
 
-- Saldo inicial manual (sin planilla) para cuentas nuevas sin historial.
-- Permisos por usuario/comunidad (hoy los 3 usuarios ven y editan todo).
+- Permisos por usuario/comunidad (hoy los usuarios del panel ven y editan todo).
 - Pedir al cliente una columna "Nº operación" en la planilla de ingresos → cruce exacto de ingresos.
 - Tabla RUT ↔ depto por comunidad (aprendida de cruces confirmados).
 - Aviso de cheques caducados (> 60 días sin cobrar).

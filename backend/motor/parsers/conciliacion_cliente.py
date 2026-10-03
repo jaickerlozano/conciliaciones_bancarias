@@ -38,6 +38,7 @@ class ConciliacionCliente:
     saldo_anterior: int | None = None
     total_ingresos: int | None = None
     total_egresos: int | None = None
+    redondeo: int = 0
     saldo_registro: int | None = None
     saldo_banco: int | None = None
     cheques_pendientes: list[PartidaLibro] = field(default_factory=list)
@@ -98,6 +99,8 @@ def _procesar(filas: list[tuple], hoja: str) -> ConciliacionCliente:
             resultado.total_ingresos = _ultimo_numero(fila)
         elif linea.startswith("EGRESOS DE"):
             resultado.total_egresos = _ultimo_numero(fila)
+        elif linea.startswith("REDONDEO"):
+            resultado.redondeo = _ultimo_numero(fila) or 0
         elif "SALDO SEGUN REGISTRO" in linea:
             resultado.saldo_registro = _ultimo_numero(fila)
         elif "SALDO SEGUN BANCO" in linea:

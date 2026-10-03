@@ -113,3 +113,31 @@ def test_advertencias_por_periodo(ingresos, egresos):
     assert any("18/08/2226" in a for a in ingresos.advertencias_de(Periodo(2026, 8)))
     assert ingresos.advertencias_de(Periodo(2026, 5)) == []
     assert any("1364" in a for a in egresos.advertencias_de(Periodo(2026, 3)))  # decimales UF
+
+
+def test_simulacion_enero_a_mayo_igual_al_cliente(datos):
+    """Encadena enero→mayo usando solo los resultados del programa y compara con las hojas
+    del cliente. Enero, marzo y abril usan sus cartolas en plantilla estándar."""
+    from motor.simular import simular
+
+    estandar = datos / "cartolas_estandar"
+    if not estandar.is_dir():
+        pytest.skip("Faltan las cartolas en plantilla estándar")
+    resultados = simular(
+        datos / PLANILLA_CONCILIACION,
+        datos / "listado ingresos CINEMA2.xlsx",
+        datos / "emitir egresos CINEMA.xlsm",
+        {
+            Periodo(2026, 1): estandar / "cartola_enero_2026.xlsx",
+            Periodo(2026, 2): datos / "cartola_febrero_2026.pdf",
+            Periodo(2026, 3): estandar / "cartola_marzo_2026.xlsx",
+            Periodo(2026, 4): estandar / "cartola_abril_2026.xlsx",
+            Periodo(2026, 5): datos / "cartola_mayo_2026.pdf",
+        },
+        Periodo(2026, 1),
+        Periodo(2026, 5),
+    )
+    for c in resultados:
+        assert c.coincide, (c.periodo, c.diferencias)
+        assert c.resultado.cuadra, (c.periodo, c.resultado.diferencia)
+    assert len(resultados[1].resultado.movimientos_descartados) == 2  # traslape de febrero

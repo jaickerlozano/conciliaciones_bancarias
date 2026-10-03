@@ -124,3 +124,49 @@ def test_no_cierra_con_diferencia(api, mayo_procesado):
     r = api.post(f"/api/conciliaciones/{mayo_procesado.id}/cerrar/")
     assert r.status_code == 400
     assert "diferencia de -$50.000" in r.json()["detail"]
+
+
+def test_apertura_manual_debe_cuadrar(api, cuenta):
+    url = f"/api/cuentas/{cuenta.id}/apertura-manual/"
+    datos = {
+        "periodo": "2026-04",
+        "saldo_registro": 1_000_000,
+        "saldo_banco": 1_000_000 + 80_000 - 50_000 + 300_000,
+        "cheques_pendientes": [{"comprobante": 1418, "monto": 80_000, "cheque": "1587144"}],
+        "depositos_pendientes": [{"comprobante": 1188, "monto": 50_000, "depto": "31"}],
+        "movimientos_no_contabilizados": [{"fecha": "2026-01-06", "monto": 300_000}],
+    }
+    malo = api.post(url, {**datos, "saldo_banco": 1}, format="json")
+    assert malo.status_code == 400
+    assert "no cuadra" in malo.json()["detail"]
+    assert not cuenta.conciliaciones.exists()  # no quedó nada a medias
+
+    r = api.post(url, datos, format="json")
+    assert r.status_code == 201, r.json()
+    assert r.json()["estado"] == "importada"
+    assert r.json()["resumen"]["diferencia"] == 0
+    assert len(r.json()["cheques_pendientes"]) == 1
+
+    # ya se puede crear mayo
+    mayo = api.post("/api/conciliaciones/", {"cuenta": cuenta.id, "periodo": "2026-05"})
+    assert mayo.status_code == 201
+
+
+def test_redondeo_limitado_y_registrado(api, mayo_procesado):
+    url = f"/api/conciliaciones/{mayo_procesado.id}/redondeo/"
+    assert api.post(url, {"monto": 101}).status_code == 400
+    r = api.post(url, {"monto": 1})
+    assert r.status_code == 200
+    assert r.json()["resumen"]["redondeo"] == 1
+    assert r.json()["resumen"]["diferencia"] == -1
+    assert r.json()["eventos"][0]["accion"] == "redondeo"
+
+
+def test_filtrar_comunidades(api, cuenta):
+    from apps.comunidades.models import Comunidad
+
+    Comunidad.objects.create(nombre="Condominio Los Robles", activa=False)
+    nombres = lambda q: [c["nombre"] for c in api.get(f"/api/comunidades/?{q}").json()]  # noqa: E731
+    assert nombres("q=robles") == ["Condominio Los Robles"]
+    assert nombres("activa=true") == ["Edificio Prueba"]
+    assert len(nombres("")) == 2

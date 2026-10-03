@@ -174,5 +174,49 @@ class CruceManualSerializer(serializers.Serializer):
     movimiento = serializers.IntegerField()
 
 
+class _ChequePendienteSerializer(serializers.Serializer):
+    comprobante = serializers.IntegerField(required=False, allow_null=True)
+    fecha = serializers.DateField(required=False, allow_null=True)
+    monto = serializers.IntegerField(min_value=1)
+    glosa = serializers.CharField(required=False, allow_blank=True, default="")
+    cheque = serializers.CharField(required=False, allow_blank=True, default="", max_length=40)
+
+
+class _DepositoPendienteSerializer(serializers.Serializer):
+    comprobante = serializers.IntegerField(required=False, allow_null=True)
+    fecha = serializers.DateField(required=False, allow_null=True)
+    monto = serializers.IntegerField(min_value=1)
+    depto = serializers.CharField(required=False, allow_blank=True, default="", max_length=40)
+    glosa = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class _MovimientoPendienteSerializer(serializers.Serializer):
+    fecha = serializers.DateField()
+    descripcion = serializers.CharField(required=False, allow_blank=True, default="")
+    monto = serializers.IntegerField(help_text="Abono positivo, cargo negativo")
+
+    def validate_monto(self, valor):
+        if valor == 0:
+            raise serializers.ValidationError("El monto no puede ser 0.")
+        return valor
+
+
+class AperturaManualSerializer(serializers.Serializer):
+    periodo = serializers.RegexField(
+        r"^\d{4}-(0[1-9]|1[0-2])$", error_messages={"invalid": "Formato esperado: AAAA-MM."}
+    )
+    saldo_registro = serializers.IntegerField()
+    saldo_banco = serializers.IntegerField()
+    cheques_pendientes = _ChequePendienteSerializer(many=True, required=False, default=list)
+    depositos_pendientes = _DepositoPendienteSerializer(many=True, required=False, default=list)
+    movimientos_no_contabilizados = _MovimientoPendienteSerializer(
+        many=True, required=False, default=list
+    )
+
+
+class RedondeoSerializer(serializers.Serializer):
+    monto = serializers.IntegerField()
+
+
 class ReabrirSerializer(serializers.Serializer):
     motivo = serializers.CharField(max_length=500)

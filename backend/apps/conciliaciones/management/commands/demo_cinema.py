@@ -1,9 +1,14 @@
-"""Carga el piloto: Comunidad Edificio Cinema, saldo inicial de abril 2026 y mayo 2026 procesado.
+"""Carga el piloto: Comunidad Edificio Cinema con la historia de enero a mayo 2026.
 
-    uv run python manage.py demo_cinema
+    uv run python manage.py demo_cinema [--reiniciar] [--hasta 2026-05] [--cerrar-ultimo]
 
-Usa los archivos reales de CONCILIACION_DATOS_DIR. Es idempotente: si ya existe, no hace nada
-(usar --reiniciar para borrar las conciliaciones de la cuenta y volver a cargar).
+- Diciembre 2025: saldo inicial importado desde la planilla de conciliación del cliente.
+- Enero → abril: procesados con el programa, cruces sugeridos confirmados y cerrados
+  (enero lleva el redondeo de $1 que el cliente ingresó a mano).
+- Mayo: queda procesado y abierto, para practicar confirmar cruces y cerrar desde la interfaz.
+
+Las cartolas de enero, marzo y abril vienen en formatos que el sistema no lee; se usan sus
+versiones en plantilla estándar (carpeta cartolas_estandar/ de los datos del cliente).
 """
 
 from pathlib import Path
@@ -18,12 +23,17 @@ from apps.conciliaciones.models import TipoArchivo
 from motor.dominio import Periodo
 from motor.texto import fmt_clp
 
-ARCHIVOS = {
-    "apertura": "CONCILIACIÓN  MENSUAL CINEMA.xlsm",
-    TipoArchivo.INGRESOS: "listado ingresos CINEMA2.xlsx",
-    TipoArchivo.EGRESOS: "emitir egresos CINEMA.xlsm",
-    TipoArchivo.CARTOLA: "cartola_mayo_2026.pdf",
+PLANILLA = "CONCILIACIÓN  MENSUAL CINEMA.xlsm"
+INGRESOS = "listado ingresos CINEMA2.xlsx"
+EGRESOS = "emitir egresos CINEMA.xlsm"
+CARTOLAS = {
+    Periodo(2026, 1): "cartolas_estandar/cartola_enero_2026.xlsx",
+    Periodo(2026, 2): "cartola_febrero_2026.pdf",
+    Periodo(2026, 3): "cartolas_estandar/cartola_marzo_2026.xlsx",
+    Periodo(2026, 4): "cartolas_estandar/cartola_abril_2026.xlsx",
+    Periodo(2026, 5): "cartola_mayo_2026.pdf",
 }
+REDONDEOS = {Periodo(2026, 1): 1}  # ingresados a mano por el cliente en su planilla
 
 
 def _subir(ruta: Path) -> SimpleUploadedFile:
@@ -31,14 +41,21 @@ def _subir(ruta: Path) -> SimpleUploadedFile:
 
 
 class Command(BaseCommand):
-    help = "Carga la comunidad piloto (Cinema) con abril 2026 importado y mayo 2026 procesado."
+    help = "Carga la comunidad piloto (Cinema) con la historia de enero a mayo 2026."
 
     def add_arguments(self, parser):
-        parser.add_argument("--reiniciar", action="store_true")
+        parser.add_argument("--reiniciar", action="store_true", help="Borra y vuelve a cargar")
+        parser.add_argument("--hasta", default="2026-05", help="Último mes a cargar (AAAA-MM)")
+        parser.add_argument(
+            "--cerrar-ultimo", action="store_true", help="Cerrar también el último mes"
+        )
 
-    def handle(self, *args, reiniciar=False, **opciones):
+    def handle(self, *args, reiniciar=False, hasta="2026-05", cerrar_ultimo=False, **opciones):
         datos: Path = settings.CONCILIACION_DATOS_DIR
-        faltan = [n for n in ARCHIVOS.values() if not (datos / n).exists()]
+        ultimo = Periodo.parse(hasta)
+        meses = [p for p in CARTOLAS if (p.anio, p.mes) <= (ultimo.anio, ultimo.mes)]
+        necesarios = [PLANILLA, INGRESOS, EGRESOS] + [CARTOLAS[p] for p in meses]
+        faltan = [n for n in necesarios if not (datos / n).exists()]
         if faltan:
             raise CommandError(f"Faltan archivos en {datos}: {', '.join(faltan)}")
 
@@ -59,17 +76,34 @@ class Command(BaseCommand):
                 servicios.eliminar_sin_validar(c)
 
         servicios.importar_apertura(
-            cuenta, _subir(datos / ARCHIVOS["apertura"]), "ABRIL´26", Periodo(2026, 4), None
+            cuenta, _subir(datos / PLANILLA), "DICIEMBRE'25", Periodo(2025, 12), None
         )
-        mayo = servicios.crear_conciliacion(cuenta, Periodo(2026, 5), None)
-        for tipo in (TipoArchivo.INGRESOS, TipoArchivo.EGRESOS, TipoArchivo.CARTOLA):
-            servicios.guardar_archivo(mayo, tipo, _subir(datos / ARCHIVOS[tipo]), None)
-        servicios.procesar(mayo, None)
+        self.stdout.write("2025-12  saldo inicial importado")
 
-        r = servicios.calcular_resumen(mayo)
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Mayo 2026 procesado: diferencia {fmt_clp(r.diferencia)}, "
-                f"{r.cruces_por_revisar} cruces por revisar."
+        for periodo in meses:
+            c = servicios.crear_conciliacion(cuenta, periodo, None)
+            archivos = {
+                TipoArchivo.INGRESOS: INGRESOS,
+                TipoArchivo.EGRESOS: EGRESOS,
+                TipoArchivo.CARTOLA: CARTOLAS[periodo],
+            }
+            for tipo, nombre in archivos.items():
+                servicios.guardar_archivo(c, tipo, _subir(datos / nombre), None)
+            servicios.procesar(c, None)
+            if periodo in REDONDEOS:
+                servicios.ajustar_redondeo(c, REDONDEOS[periodo], None)
+
+            r = servicios.calcular_resumen(c)
+            linea = (
+                f"{periodo}  diferencia {fmt_clp(r.diferencia)}, "
+                f"{r.cruces_por_revisar} cruces por revisar"
             )
-        )
+            if periodo != ultimo or cerrar_ultimo:
+                for cruce in c.cruces.select_related("partida", "movimiento"):
+                    if cruce.requiere_revision:
+                        servicios.confirmar_cruce(cruce, None)
+                servicios.cerrar(c, None)
+                linea += " → confirmados y cerrada"
+            self.stdout.write(linea)
+
+        self.stdout.write(self.style.SUCCESS("Piloto cargado."))

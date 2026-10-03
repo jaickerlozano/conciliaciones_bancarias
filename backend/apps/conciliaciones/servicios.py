@@ -42,6 +42,7 @@ from motor.parsers.libros import leer_libro
 from motor.texto import fmt_clp, normalizar
 
 MAX_PARTIDAS_PLANILLA = 10_000
+MAX_REDONDEO = 100  # pesos: el redondeo solo absorbe decimales (cuotas en UF), no diferencias
 
 EXTENSIONES = {
     TipoArchivo.INGRESOS: (".xlsx", ".xlsm"),
@@ -246,6 +247,46 @@ def apertura_desde(previa: Conciliacion) -> dominio.EstadoApertura:
 # --------------------------------------------------------------------------- casos de uso
 
 
+def _preparar_apertura(cuenta: CuentaBancaria, periodo: dominio.Periodo, usuario) -> Conciliacion:
+    """El saldo inicial solo se carga al empezar a usar el sistema con una cuenta (reemplaza
+    una carga anterior si aún no hay meses conciliados en el sistema)."""
+    existentes = cuenta.conciliaciones.all()
+    if existentes.exclude(estado=EstadoConciliacion.IMPORTADA).exists():
+        raise ErrorConciliacion(
+            "Esta cuenta ya tiene conciliaciones hechas en el sistema; el saldo inicial solo "
+            "se carga al comenzar."
+        )
+    for previa in existentes:
+        eliminar_sin_validar(previa)
+    return Conciliacion.objects.create(
+        cuenta=cuenta,
+        anio=periodo.anio,
+        mes=periodo.mes,
+        estado=EstadoConciliacion.IMPORTADA,
+        creada_por=usuario,
+    )
+
+
+def _cargar_saldo_inicial(
+    c: Conciliacion,
+    saldo_registro: int,
+    saldo_banco: int,
+    cheques: list[dominio.PartidaLibro],
+    depositos: list[dominio.PartidaLibro],
+    no_contabilizados: list[dominio.MovimientoBancario],
+) -> Resumen:
+    c.saldo_anterior = saldo_registro  # sin ingresos/egresos: registro = saldo inicial
+    c.saldo_banco = saldo_banco
+    Partida.objects.bulk_create(
+        _nueva_partida(c, p, OrigenPartida.ARRASTRE) for p in cheques + depositos
+    )
+    Movimiento.objects.bulk_create(
+        _nuevo_movimiento(c, m, OrigenMovimiento.ARRASTRE) for m in no_contabilizados
+    )
+    c.save()
+    return calcular_resumen(c)
+
+
 @transaction.atomic
 def importar_apertura(
     cuenta: CuentaBancaria,
@@ -254,24 +295,8 @@ def importar_apertura(
     periodo: dominio.Periodo,
     usuario,
 ) -> Conciliacion:
-    """Crea la conciliación del `periodo` a partir de la hoja hecha a mano por el cliente.
-    Solo se permite al empezar a usar el sistema con una cuenta."""
-    existentes = cuenta.conciliaciones.all()
-    if existentes.exclude(estado=EstadoConciliacion.IMPORTADA).exists():
-        raise ErrorConciliacion(
-            "Esta cuenta ya tiene conciliaciones hechas en el sistema; el saldo inicial solo "
-            "se importa al comenzar."
-        )
-    for previa in existentes:  # reemplazar una importación anterior
-        eliminar_sin_validar(previa)
-
-    c = Conciliacion.objects.create(
-        cuenta=cuenta,
-        anio=periodo.anio,
-        mes=periodo.mes,
-        estado=EstadoConciliacion.IMPORTADA,
-        creada_por=usuario,
-    )
+    """Saldo inicial desde la última hoja de conciliación hecha a mano por el cliente."""
+    c = _preparar_apertura(cuenta, periodo, usuario)
     registro = _guardar(c, TipoArchivo.APERTURA, archivo, usuario)
     datos = leer_conciliacion_cliente(registro.archivo.path, hoja)
     if datos.saldo_registro is None or datos.saldo_banco is None:
@@ -279,24 +304,47 @@ def importar_apertura(
             f"La hoja '{hoja}' no tiene 'Saldo según registro' o 'Saldo según banco'. "
             "¿Es una hoja de conciliación mensual?"
         )
-
-    c.saldo_anterior = datos.saldo_registro  # sin ingresos/egresos: registro = saldo importado
-    c.saldo_banco = datos.saldo_banco
-    Partida.objects.bulk_create(
-        _nueva_partida(c, p, OrigenPartida.ARRASTRE)
-        for p in datos.cheques_pendientes + datos.depositos_pendientes
-    )
-    Movimiento.objects.bulk_create(
-        _nuevo_movimiento(c, m, OrigenMovimiento.ARRASTRE)
-        for m in datos.movimientos_no_contabilizados
-    )
-    resumen = calcular_resumen(c)
+    resumen = _cargar_saldo_inicial(
+        c, datos.saldo_registro, datos.saldo_banco, datos.cheques_pendientes,
+        datos.depositos_pendientes, datos.movimientos_no_contabilizados,
+    )  # fmt: skip
     if resumen.diferencia:
         c.advertencias = [
             f"La hoja importada no cuadra: diferencia de {fmt_clp(resumen.diferencia)}."
         ]
-    c.save()
+        c.save(update_fields=["advertencias"])
     _evento(c, usuario, AccionEvento.IMPORTADA, f"Hoja '{hoja}' de {archivo.name}")
+    return c
+
+
+@transaction.atomic
+def apertura_manual(
+    cuenta: CuentaBancaria,
+    periodo: dominio.Periodo,
+    saldo_registro: int,
+    saldo_banco: int,
+    cheques: list[dominio.PartidaLibro],
+    depositos: list[dominio.PartidaLibro],
+    no_contabilizados: list[dominio.MovimientoBancario],
+    usuario,
+) -> Conciliacion:
+    """Saldo inicial ingresado a mano: saldos del cierre del mes `periodo` y sus pendientes.
+    Debe cuadrar exactamente (si no, no se guarda nada)."""
+    c = _preparar_apertura(cuenta, periodo, usuario)
+    resumen = _cargar_saldo_inicial(
+        c, saldo_registro, saldo_banco, cheques, depositos, no_contabilizados
+    )
+    if resumen.diferencia:
+        raise ErrorConciliacion(
+            f"El saldo inicial no cuadra: saldo banco {fmt_clp(saldo_banco)} vs saldo según "
+            f"conciliación {fmt_clp(resumen.saldo_conciliacion)} (diferencia "
+            f"{fmt_clp(resumen.diferencia)}). Revise los saldos y los pendientes."
+        )
+    detalle = (
+        f"Ingreso manual: {len(cheques)} cheques, {len(depositos)} depósitos y "
+        f"{len(no_contabilizados)} movimientos pendientes."
+    )
+    _evento(c, usuario, AccionEvento.IMPORTADA, detalle)
     return c
 
 
@@ -333,7 +381,7 @@ def _limpiar_resultados(c: Conciliacion) -> None:
     c.cruces.all().delete()
     c.partidas.all().delete()
     c.movimientos.all().delete()
-    c.saldo_anterior = c.total_ingresos = c.total_egresos = 0
+    c.saldo_anterior = c.total_ingresos = c.total_egresos = c.redondeo = 0
     c.saldo_banco = None
     c.advertencias = []
     c.procesada_en = None
@@ -514,6 +562,21 @@ def cruzar_manual(c: Conciliacion, partida: Partida, movimiento: Movimiento, usu
         f"Comprobante {partida.comprobante} ↔ {movimiento.fecha:%d/%m} {fmt_clp(movimiento.monto)}",
     )  # fmt: skip
     return cruce
+
+
+def ajustar_redondeo(c: Conciliacion, monto: int, usuario) -> Conciliacion:
+    if c.estado != EstadoConciliacion.PROCESADA:
+        raise ErrorConciliacion("El redondeo se ajusta en una conciliación procesada.")
+    if abs(monto) > MAX_REDONDEO:
+        raise ErrorConciliacion(
+            f"El redondeo no puede superar {fmt_clp(MAX_REDONDEO)}: solo sirve para absorber "
+            "decimales. Una diferencia mayor hay que buscarla en los cruces."
+        )
+    valor_anterior = c.redondeo
+    c.redondeo = monto
+    c.save(update_fields=["redondeo"])
+    _evento(c, usuario, AccionEvento.REDONDEO, f"{fmt_clp(valor_anterior)} → {fmt_clp(monto)}")
+    return c
 
 
 def cerrar(c: Conciliacion, usuario) -> Conciliacion:

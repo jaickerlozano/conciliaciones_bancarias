@@ -1,7 +1,8 @@
 """Cruce entre partidas del libro y movimientos de la cartola.
 
 Capas, de más a menos segura:
-1. Egresos con nº de cheque  <->  cargos cuyo nº de documento es ese cheque.
+1. Egresos con nº de cheque  <->  cargos cuyo nº de documento es ese cheque (o su terminación,
+   si la cartola lo trunca y el monto es idéntico).
 2. Egresos restantes (PAC, transferencias)  <->  cargos restantes, por monto y fecha.
 3. Ingresos  <->  abonos, por monto y fecha.
 
@@ -82,6 +83,8 @@ def _cruzar_cheques(
             if numero
             else []
         )
+        if not candidatos and numero:
+            candidatos = _por_terminacion(numero, e.monto, cargos, usados)
         if not candidatos:
             sin_cruce.append(e)
             continue
@@ -93,6 +96,25 @@ def _cruzar_cheques(
             nota = f"Monto distinto: libro {fmt_clp(e.monto)} vs banco {fmt_clp(cargo.monto)}."
         cruces.append(Cruce(e, cargo, TipoCruce.CHEQUE, nota))
     return cruces, sin_cruce, [c for c in cargos if id(c) not in usados]
+
+
+MIN_DIGITOS_TERMINACION = 5
+
+
+def _por_terminacion(
+    numero: str, monto: int, cargos: list[MovimientoBancario], usados: set[int]
+) -> list[MovimientoBancario]:
+    """Algunas cartolas muestran el nº de cheque truncado ("87109" por "1587109"). Se acepta
+    si el documento tiene al menos 5 dígitos, es la terminación del cheque y el monto es igual."""
+    numero = _normalizar_doc(numero)
+    return [
+        c
+        for c in cargos
+        if id(c) not in usados
+        and c.monto == monto
+        and len(doc := _normalizar_doc(c.documento)) >= MIN_DIGITOS_TERMINACION
+        and numero.endswith(doc)
+    ]
 
 
 def _dias(a: date | None, b: date) -> int:
