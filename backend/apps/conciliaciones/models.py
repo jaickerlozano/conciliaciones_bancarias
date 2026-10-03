@@ -36,6 +36,9 @@ class Conciliacion(models.Model):
     total_egresos = models.BigIntegerField(default=0)
     redondeo = models.BigIntegerField(default=0)
     saldo_banco = models.BigIntegerField(null=True, blank=True)
+    cartola_numero = models.CharField("nº de cartola", max_length=20, blank=True)
+    cartola_desde = models.DateField(null=True, blank=True)
+    cartola_hasta = models.DateField(null=True, blank=True)
     advertencias = models.JSONField(default=list, blank=True)
 
     creada_por = models.ForeignKey(

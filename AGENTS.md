@@ -32,7 +32,7 @@ ingresos/egresos se registrarán directamente en el sistema.
 | 2 | Backend Django + DRF + PostgreSQL: modelos, carga de archivos, API, login | ✅ Hecho |
 | 2b | Simulación ene→may 2026 vs. conciliaciones del cliente: los 5 meses iguales, dif. $0 | ✅ Hecho |
 | 3 | Frontend React: carga mensual, mesa de trabajo de cruces, vista de conciliación | ✅ Hecho |
-| 4 | Salidas: PDF (WeasyPrint) y Excel (openpyxl) | Pendiente |
+| 4 | Salidas: PDF (ReportLab) y Excel (openpyxl, con fórmulas) | ✅ Hecho |
 | 5 | Más bancos y comunidades (pruebas antes de producción) | Pendiente |
 
 ## 3. Stack
@@ -43,14 +43,14 @@ ingresos/egresos se registrarán directamente en el sistema.
 | Backend | Django 5 + Django REST Framework, auth por sesión (cookie + CSRF), sin JWT |
 | BD | PostgreSQL 16 (Docker) |
 | Frontend | React 19 + TypeScript + Vite, Tailwind CSS 4, TanStack Query, React Router, lucide-react, sonner, pnpm |
-| PDF salida | WeasyPrint (plantilla HTML/CSS) — requiere GTK/Pango: usar Docker en Windows |
-| Excel salida | openpyxl |
+| PDF salida | ReportLab (Python puro: funciona igual en Windows y Docker, sin GTK) |
+| Excel salida | openpyxl (fórmulas vivas en la hoja principal) |
 | Tests | pytest + pytest-django (BD de tests en el Postgres de Docker), Vitest en frontend |
 | Lint | ruff (Python, línea 100), oxlint + `tsc` estricto (frontend) |
 | Paquetes | `uv` (Python), `pnpm` (JS) |
 | Infra | Docker Compose: `db`, `backend`, `frontend` |
 
-No usar: camelot (requiere Ghostscript), pandas en el motor (innecesario), Celery (los archivos
+No usar: WeasyPrint (en Windows exige GTK/Pango; se reemplazó por ReportLab), camelot (requiere Ghostscript), pandas en el motor (innecesario), Celery (los archivos
 son pequeños; procesamiento síncrono).
 
 ## 4. Estructura
@@ -81,6 +81,7 @@ conciliaciones_bancarias/
 │   │       ├── models.py      # Conciliacion, Partida, Movimiento, Cruce, ArchivoCargado, Evento
 │   │       ├── servicios.py   # TODA la lógica de negocio (casos de uso)
 │   │       ├── views.py       # solo HTTP: valida entrada y llama a servicios
+│   │       ├── informes/      # datos.py (estructura común) → pdf.py y excel.py
 │   │       └── management/commands/demo_cinema.py
 │   ├── Dockerfile
 │   └── tests/
@@ -112,6 +113,18 @@ conciliaciones_bancarias/
    (con "Cruzar…" solo si hay contraparte del mismo monto), todos los cruces, advertencias e
    historial. Acciones: cerrar (solo con diferencia $0 y nada por revisar), reabrir con motivo,
    eliminar.
+
+### Informes (PDF y Excel)
+
+- Ambos salen de `informes/datos.py::armar_informe` (una sola fuente: nunca difieren).
+- Contenido: cabecera (comunidad, banco, cuenta, cartola y período, estado), cálculo con la
+  estructura de la planilla del cliente y la diferencia destacada, cheques no cobrados, depósitos
+  no registrados, movimientos no contabilizados (con totales), firmas Preparado/Revisado por.
+- PDF: anexo con todos los cruces, pie "Página X de Y", marca de agua BORRADOR si no está cerrada.
+- Excel: hoja Conciliación con **fórmulas vivas** (saldo según registro, totales =SUM, conciliación
+  y diferencia con formato condicional verde/rojo) + hojas Cruces y Cartola (estado de cada
+  movimiento) con filtros. Configurado para imprimir en A4.
+- Nombre de archivo: `Conciliacion_<Comunidad>_<AAAA-MM>.pdf|xlsx`.
 
 Convenciones de UI: textos en español de Chile, montos con `pesos()` y clase `monto`
 (tabular-nums), colores de estado fijos (ver `index.css`), toda acción con resultado visible
@@ -151,6 +164,8 @@ Las vistas **no** contienen reglas de negocio: todo pasa por `apps/conciliacione
 | POST/DELETE | `conciliaciones/ID/cruces/CID/confirmar/` · `conciliaciones/ID/cruces/CID/` | Confirmar / deshacer |
 | POST | `conciliaciones/ID/redondeo/` `{monto}` | Ajuste por redondeo (±$100) |
 | POST | `conciliaciones/ID/cerrar/` · `conciliaciones/ID/reabrir/` `{motivo}` | Cierre |
+| GET | `conciliaciones/ID/pdf/` · `conciliaciones/ID/excel/` | Informe descargable (no disponible en borrador) |
+| GET | `bancos/` · `plantilla-cartola/` | Lista de bancos · plantilla estándar vacía |
 
 ## 5. Reglas de negocio de la conciliación (fuente de verdad)
 

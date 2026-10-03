@@ -42,8 +42,15 @@ class MovimientoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Movimiento
         fields = [
-            "id", "origen", "fecha", "descripcion", "monto", "es_cargo", "documento", "sucursal",
-        ]  # fmt: skip
+            "id",
+            "origen",
+            "fecha",
+            "descripcion",
+            "monto",
+            "es_cargo",
+            "documento",
+            "sucursal",
+        ]
 
 
 class CruceSerializer(serializers.ModelSerializer):
@@ -55,9 +62,16 @@ class CruceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Cruce
         fields = [
-            "id", "tipo", "nota", "confirmado", "confirmado_por", "confirmado_en",
-            "requiere_revision", "partida", "movimiento",
-        ]  # fmt: skip
+            "id",
+            "tipo",
+            "nota",
+            "confirmado",
+            "confirmado_por",
+            "confirmado_en",
+            "requiere_revision",
+            "partida",
+            "movimiento",
+        ]
 
     def get_confirmado_por(self, obj) -> str | None:
         return _nombre_usuario(obj.confirmado_por)
@@ -99,10 +113,22 @@ class ConciliacionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Conciliacion
         fields = [
-            "id", "cuenta", "cuenta_nombre", "cuenta_numero", "banco_nombre", "comunidad_id",
-            "comunidad_nombre", "anio", "mes", "periodo", "estado",
-            "creada_en", "procesada_en", "cerrada_en", "resumen",
-        ]  # fmt: skip
+            "id",
+            "cuenta",
+            "cuenta_nombre",
+            "cuenta_numero",
+            "banco_nombre",
+            "comunidad_id",
+            "comunidad_nombre",
+            "anio",
+            "mes",
+            "periodo",
+            "estado",
+            "creada_en",
+            "procesada_en",
+            "cerrada_en",
+            "resumen",
+        ]
         read_only_fields = fields
 
     def get_periodo(self, obj) -> str:
@@ -126,10 +152,19 @@ class ConciliacionDetalleSerializer(ConciliacionSerializer):
 
     class Meta(ConciliacionSerializer.Meta):
         fields = ConciliacionSerializer.Meta.fields + [
-            "advertencias", "cerrada_por", "cheques_pendientes", "depositos_pendientes",
-            "movimientos_no_contabilizados", "movimientos_repetidos", "cruces", "archivos",
+            "advertencias",
+            "cerrada_por",
+            "cartola_numero",
+            "cartola_desde",
+            "cartola_hasta",
+            "cheques_pendientes",
+            "depositos_pendientes",
+            "movimientos_no_contabilizados",
+            "movimientos_repetidos",
+            "cruces",
+            "archivos",
             "eventos",
-        ]  # fmt: skip
+        ]
         read_only_fields = fields
 
     def _pendientes(self, obj, tipo):
@@ -162,9 +197,9 @@ class ConciliacionDetalleSerializer(ConciliacionSerializer):
 
 class CrearConciliacionSerializer(serializers.Serializer):
     cuenta = serializers.IntegerField()
-    periodo = serializers.RegexField(r"^\d{4}-(0[1-9]|1[0-2])$", error_messages={
-        "invalid": "Formato esperado: AAAA-MM."
-    })  # fmt: skip
+    periodo = serializers.RegexField(
+        r"^\d{4}-(0[1-9]|1[0-2])$", error_messages={"invalid": "Formato esperado: AAAA-MM."}
+    )
 
 
 class SubirArchivoSerializer(serializers.Serializer):

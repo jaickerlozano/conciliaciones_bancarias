@@ -383,6 +383,8 @@ def _limpiar_resultados(c: Conciliacion) -> None:
     c.movimientos.all().delete()
     c.saldo_anterior = c.total_ingresos = c.total_egresos = c.redondeo = 0
     c.saldo_banco = None
+    c.cartola_numero = ""
+    c.cartola_desde = c.cartola_hasta = None
     c.advertencias = []
     c.procesada_en = None
     c.estado = EstadoConciliacion.BORRADOR
@@ -470,6 +472,9 @@ def procesar(c: Conciliacion, usuario) -> Conciliacion:
     c.total_ingresos = r.total_ingresos
     c.total_egresos = r.total_egresos
     c.saldo_banco = r.saldo_banco
+    c.cartola_numero = cartola.numero[:20]
+    c.cartola_desde = cartola.desde
+    c.cartola_hasta = cartola.hasta
     c.advertencias = r.advertencias + advertencias
     c.estado = EstadoConciliacion.PROCESADA
     c.procesada_en = timezone.now()

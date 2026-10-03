@@ -1,3 +1,4 @@
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
@@ -5,6 +6,9 @@ from rest_framework.response import Response
 
 from apps.comunidades.models import CuentaBancaria
 from apps.conciliaciones import servicios
+from apps.conciliaciones.informes.datos import armar_informe
+from apps.conciliaciones.informes.excel import generar_excel
+from apps.conciliaciones.informes.pdf import generar_pdf
 from apps.conciliaciones.models import Conciliacion, Cruce, Movimiento, Partida
 from apps.conciliaciones.serializers import (
     ArchivoSerializer,
@@ -39,6 +43,8 @@ class ConciliacionViewSet(
     POST   /api/conciliaciones/ID/redondeo/        {monto}
     POST   /api/conciliaciones/ID/cerrar/
     POST   /api/conciliaciones/ID/reabrir/         {motivo}
+    GET    /api/conciliaciones/ID/pdf/              informe en PDF
+    GET    /api/conciliaciones/ID/excel/            informe en Excel (con fórmulas)
     """
 
     queryset = Conciliacion.objects.select_related("cuenta__comunidad", "cerrada_por")
@@ -137,3 +143,24 @@ class ConciliacionViewSet(
         datos.is_valid(raise_exception=True)
         c = servicios.reabrir(self.get_object(), request.user, datos.validated_data["motivo"])
         return self._detalle(c)
+
+    def _descarga(self, contenido: bytes, nombre: str, tipo: str) -> HttpResponse:
+        respuesta = HttpResponse(contenido, content_type=tipo)
+        respuesta["Content-Disposition"] = f'attachment; filename="{nombre}"'
+        return respuesta
+
+    @action(detail=True, methods=["get"])
+    def pdf(self, request, pk=None):
+        informe = armar_informe(self.get_object(), request.user)
+        return self._descarga(
+            generar_pdf(informe), f"{informe.nombre_archivo}.pdf", "application/pdf"
+        )
+
+    @action(detail=True, methods=["get"])
+    def excel(self, request, pk=None):
+        informe = armar_informe(self.get_object(), request.user)
+        return self._descarga(
+            generar_excel(informe),
+            f"{informe.nombre_archivo}.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )

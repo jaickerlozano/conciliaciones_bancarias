@@ -85,3 +85,26 @@ def test_rechaza_cartola_de_otra_cuenta(api, datos, apertura):
     r = api.post(f"{url}/procesar/")
     assert r.status_code == 400
     assert "0-000-03-81745-8" in r.json()["detail"]
+
+
+def test_informes_de_mayo_real(api, datos):
+    """El Excel de mayo, evaluando sus fórmulas, da los mismos totales que la conciliación."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    from tests.test_api.test_informes import evaluar
+
+    test_flujo_mensual_completo(api, datos)
+    mayo = api.get("/api/conciliaciones/?cuenta=" + str(
+        api.get("/api/cuentas/").json()[0]["id"])).json()  # fmt: skip
+    mayo = next(c for c in mayo if c["periodo"] == "2026-05")
+    ws = load_workbook(BytesIO(api.get(f"/api/conciliaciones/{mayo['id']}/excel/").content)).active
+    assert evaluar(ws, "F11") == 1_677_679
+    assert evaluar(ws, "F12") == 6_131_348
+    assert evaluar(ws, "F13") == 2_644_177
+    assert evaluar(ws, "F16") == 5_164_850
+    assert evaluar(ws, "F17") == 0
+    assert "Cartola Nº 306 (30/04/2026 al 29/05/2026)" in ws["B3"].value
+    pdf = api.get(f"/api/conciliaciones/{mayo['id']}/pdf/")
+    assert pdf.content.startswith(b"%PDF")

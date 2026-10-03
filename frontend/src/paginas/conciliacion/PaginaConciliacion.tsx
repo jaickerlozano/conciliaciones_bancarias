@@ -1,4 +1,4 @@
-import { Lock, RotateCcw, Trash2 } from 'lucide-react'
+import { FileSpreadsheet, FileText, Lock, RotateCcw, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
@@ -102,8 +102,29 @@ function Acciones({ c }: { c: Conciliacion }) {
     setMotivo('')
   }
 
+  const conInforme = c.estado !== 'borrador'
+
   return (
     <>
+      {conInforme && (
+        <div className="flex rounded-lg shadow-sm ring-1 ring-slate-300" role="group" aria-label="Descargar informe">
+          <a
+            href={`/api/conciliaciones/${c.id}/pdf/`}
+            className="inline-flex items-center gap-2 rounded-l-lg bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            title={c.estado === 'procesada' ? 'Saldrá marcado como BORRADOR hasta cerrar el mes' : undefined}
+          >
+            <FileText className="size-4 text-rose-600" aria-hidden />
+            PDF
+          </a>
+          <a
+            href={`/api/conciliaciones/${c.id}/excel/`}
+            className="inline-flex items-center gap-2 rounded-r-lg border-l border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <FileSpreadsheet className="size-4 text-emerald-600" aria-hidden />
+            Excel
+          </a>
+        </div>
+      )}
       {c.estado !== 'cerrada' && (
         <Boton variante="fantasma" icono={Trash2} onClick={() => setDialogo('eliminar')}>
           Eliminar
