@@ -89,6 +89,11 @@ class MovimientoBancario:
         """Efecto sobre el saldo del banco: abonos positivos, cargos negativos."""
         return -self.monto if self.es_cargo else self.monto
 
+    @property
+    def huella(self) -> tuple:
+        """Identifica el mismo movimiento aunque venga en dos cartolas distintas."""
+        return (self.fecha, self.monto, self.es_cargo, self.documento.strip(), self.descripcion)
+
 
 @dataclass
 class Cartola:
@@ -124,6 +129,8 @@ class EstadoApertura:
     cheques_pendientes: list[PartidaLibro] = field(default_factory=list)
     depositos_pendientes: list[PartidaLibro] = field(default_factory=list)
     movimientos_no_contabilizados: list[MovimientoBancario] = field(default_factory=list)
+    # movimientos de la cartola anterior: para descartar los repetidos si las cartolas se traslapan
+    movimientos_cartola_anterior: list[MovimientoBancario] = field(default_factory=list)
 
 
 class TipoCruce(StrEnum):
@@ -157,6 +164,8 @@ class ResultadoConciliacion:
     saldo_banco: int
     cruces: list[Cruce]
     advertencias: list[str] = field(default_factory=list)
+    movimientos_cartola: list[MovimientoBancario] = field(default_factory=list)
+    movimientos_descartados: list[MovimientoBancario] = field(default_factory=list)
 
     @property
     def saldo_registro(self) -> int:
@@ -199,4 +208,5 @@ class ResultadoConciliacion:
             cheques_pendientes=list(self.cheques_pendientes),
             depositos_pendientes=list(self.depositos_pendientes),
             movimientos_no_contabilizados=list(self.movimientos_no_contabilizados),
+            movimientos_cartola_anterior=list(self.movimientos_cartola),
         )

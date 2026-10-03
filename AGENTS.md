@@ -24,7 +24,7 @@ ingresos/egresos se registrarán directamente en el sistema.
 | Fase | Contenido | Estado |
 |---|---|---|
 | 1 | Motor puro Python: parsers + cruce + cálculo. Criterio: reproducir mayo 2026 con diferencia 0 | ✅ Hecho |
-| 2 | Backend Django + DRF + PostgreSQL: modelos, carga de archivos, API, login | Pendiente |
+| 2 | Backend Django + DRF + PostgreSQL: modelos, carga de archivos, API, login | ✅ Hecho |
 | 3 | Frontend React: carga mensual, mesa de trabajo de cruces, vista de conciliación | Pendiente |
 | 4 | Salidas: PDF (WeasyPrint) y Excel (openpyxl) | Pendiente |
 | 5 | Más bancos y comunidades (pruebas antes de producción) | Pendiente |
@@ -39,7 +39,7 @@ ingresos/egresos se registrarán directamente en el sistema.
 | Frontend | React + TypeScript + Vite, Tailwind CSS, TanStack Query, pnpm |
 | PDF salida | WeasyPrint (plantilla HTML/CSS) — requiere GTK/Pango: usar Docker en Windows |
 | Excel salida | openpyxl |
-| Tests | pytest (+ pytest-django en fase 2), Vitest en frontend |
+| Tests | pytest + pytest-django (BD de tests en el Postgres de Docker), Vitest en frontend |
 | Lint | ruff (Python, línea 100), ESLint + `tsc` (frontend) |
 | Paquetes | `uv` (Python), `pnpm` (JS) |
 | Infra | Docker Compose: `db`, `backend`, `frontend` |
@@ -65,15 +65,57 @@ conciliaciones_bancarias/
 │   │       ├── libros.py               # planillas de ingresos/egresos
 │   │       ├── conciliacion_cliente.py # hoja de conciliación manual (estado inicial)
 │   │       └── cartolas/               # un módulo por banco/formato + base.py (registro)
-│   ├── config/            # FASE 2 — proyecto Django (settings, urls)
-│   ├── apps/              # FASE 2 — apps Django (comunidades, conciliaciones, ...)
+│   ├── config/            # proyecto Django: settings (vía .env), urls, excepciones -> 400
+│   ├── apps/
+│   │   ├── autenticacion/     # login/logout/yo/csrf por sesión
+│   │   ├── comunidades/       # Comunidad, CuentaBancaria (+ importar apertura)
+│   │   └── conciliaciones/
+│   │       ├── models.py      # Conciliacion, Partida, Movimiento, Cruce, ArchivoCargado, Evento
+│   │       ├── servicios.py   # TODA la lógica de negocio (casos de uso)
+│   │       ├── views.py       # solo HTTP: valida entrada y llama a servicios
+│   │       └── management/commands/demo_cinema.py
+│   ├── Dockerfile
 │   └── tests/
-│       ├── test_motor/        # tests del motor
+│       ├── test_motor/        # tests del motor (sin BD)
+│       ├── test_api/          # tests de la API (requieren Postgres)
 │       └── conftest.py        # fixture `datos` (archivos reales, se omite si no están)
+├── docker-compose.yml     # db (Postgres 16) + backend
+├── .env.example           # copiar a .env
 └── frontend/              # FASE 3
 ```
 
 Las apps Django **usan** el motor; el motor **nunca** importa Django.
+Las vistas **no** contienen reglas de negocio: todo pasa por `apps/conciliaciones/servicios.py`
+(lanza `ErrorConciliacion`, que `config/excepciones.py` convierte en 400 `{"detail": "..."}`).
+
+### Modelo de datos
+
+- `Conciliacion` (una por cuenta y mes; estados `importada` → `borrador` → `procesada` → `cerrada`).
+  Guarda saldo anterior, totales del mes, saldo banco y advertencias.
+- `Partida` (libro) y `Movimiento` (banco) se guardan **todos**; lo que no tiene `Cruce` es pendiente.
+  `origen`: `periodo` / `arrastre` (pendiente de meses anteriores) / `repetido` (movimiento ya
+  incluido en la cartola anterior, descartado).
+- La apertura de un mes = pendientes de la conciliación anterior (`servicios.apertura_desde`).
+  El primer mes de una cuenta se importa desde la planilla del cliente (estado `importada`).
+- `ArchivoCargado`: archivo original + sha256 (auditoría). `Evento`: bitácora de quién hizo qué.
+- Resumen (saldos, diferencia, cruces por revisar) se calcula con `servicios.calcular_resumen`.
+
+### API (`/api/…`, sesión + CSRF; todo requiere login salvo `auth/csrf` y `auth/login`)
+
+| Método | Ruta | Uso |
+|---|---|---|
+| GET | `auth/csrf/` | Setea cookie `csrftoken` (enviarla en `X-CSRFToken`) |
+| POST | `auth/login/` `{usuario, clave}` · `auth/logout/` · GET `auth/yo/` | Sesión |
+| CRUD | `comunidades/`, `cuentas/?comunidad=ID` | Maestros |
+| POST | `cuentas/hojas/` (multipart `archivo`) | Lista hojas de una planilla de conciliación |
+| POST | `cuentas/ID/apertura/` (multipart `archivo, hoja, periodo`) | Importa saldo inicial |
+| GET/POST | `conciliaciones/?cuenta=ID` · `{cuenta, periodo:"AAAA-MM"}` | Listar / crear |
+| GET/DELETE | `conciliaciones/ID/` | Detalle completo / eliminar |
+| POST | `conciliaciones/ID/archivos/` (multipart `tipo, archivo`) | `ingresos`, `egresos`, `cartola` |
+| POST | `conciliaciones/ID/procesar/` | Corre el motor y guarda resultados |
+| POST | `conciliaciones/ID/cruces/` `{partida, movimiento}` | Cruce manual |
+| POST/DELETE | `conciliaciones/ID/cruces/CID/confirmar/` · `conciliaciones/ID/cruces/CID/` | Confirmar / deshacer |
+| POST | `conciliaciones/ID/cerrar/` · `conciliaciones/ID/reabrir/` `{motivo}` | Cierre |
 
 ## 5. Reglas de negocio de la conciliación (fuente de verdad)
 
@@ -106,6 +148,13 @@ Diferencia               = saldo final de la cartola − saldo según conciliaci
 - Comprobantes con monto 0 ("NULO") se ignoran. Concepto `INGRESO`/`INGRESOS`, `EGRESO`/`EGRESOS`.
 - Una conciliación aprobada queda **cerrada** (inmutable, con usuario y fecha); su estado de cierre
   es la apertura del mes siguiente.
+- **Solo se cierra** si la diferencia es 0 y no quedan cruces por revisar (sugeridos sin confirmar).
+- Para crear el mes N, el mes N−1 debe estar cerrado (o importado). Para reabrir o eliminar un
+  mes, no debe existir el mes siguiente. Reabrir exige motivo (queda en la bitácora).
+- Cruce manual: egreso ↔ cargo o ingreso ↔ abono, mismo monto, ambos libres.
+- Si se sube un archivo nuevo a una conciliación procesada, sus resultados se borran (hay que
+  volver a procesar).
+- La cartola debe ser del banco y nº de cuenta de la `CuentaBancaria` que se concilia.
 - Al incorporar una comunidad, el estado inicial se importa desde la última hoja de su planilla
   "CONCILIACIÓN MENSUAL" (`parsers/conciliacion_cliente.py`).
 
@@ -157,8 +206,9 @@ asociar RUT ↔ depto y automatizar el cruce de ingresos.
 ```bash
 # Backend / motor (desde backend/)
 uv sync                                   # instalar dependencias
-uv run pytest                             # todos los tests
-uv run pytest -m "not datos_reales"       # solo tests sin archivos del cliente
+uv run pytest                             # todos los tests (test_api requiere Postgres arriba)
+uv run pytest tests/test_motor            # solo el motor (sin BD)
+uv run pytest -m "not datos_reales"       # sin archivos del cliente
 uv run ruff check . && uv run ruff format --check .
 uv run python -m motor.cli --periodo 2026-05 \
   --ingresos "../../ingresos_egresos_cartolas/listado ingresos CINEMA2.xlsx" \
@@ -167,9 +217,17 @@ uv run python -m motor.cli --periodo 2026-05 \
   --apertura "../../ingresos_egresos_cartolas/CONCILIACIÓN  MENSUAL CINEMA.xlsm" \
   --hoja-apertura "ABRIL´26"
 
-# Fase 2+ (Django)
-uv run python manage.py makemigrations && uv run python manage.py migrate
-uv run pytest -k "upload"
+# Base de datos (desde la raíz; requiere Docker Desktop corriendo)
+cp .env.example .env                      # primera vez
+docker compose up -d db                   # Postgres en localhost:5432
+docker compose up --build                 # alternativa: db + backend en contenedores (:8000)
+
+# Django (desde backend/)
+uv run python manage.py migrate
+uv run python manage.py createsuperuser   # crear los usuarios (o desde /admin)
+uv run python manage.py demo_cinema       # carga el piloto: abril importado + mayo procesado
+uv run python manage.py runserver         # http://localhost:8000/admin y /api/
+uv run python manage.py makemigrations    # tras cambiar modelos
 
 # Fase 3+ (frontend, desde frontend/)
 pnpm install
@@ -183,10 +241,12 @@ En Windows la consola necesita `PYTHONIOENCODING=utf-8` para imprimir tildes des
 
 - **Cartola ilegible** (escaneada, fuente codificada): el parser aborta con `ErrorCartola` y un
   mensaje que pide el formato correcto. Nunca devolver movimientos vacíos como si fuera válida.
-- **Archivos grandes:** rechazar planillas de más de 10.000 filas útiles en un request síncrono.
+- **Archivos grandes:** rechazar planillas de más de 10.000 partidas en un request síncrono.
 - **Uploads:** validar extensión y tamaño (máx. 10 MB); guardar el archivo original asociado a la
   conciliación para auditoría.
 - **Conciliación cerrada = inmutable.** Reabrir requiere acción explícita y queda registrada.
+- **El admin de Django es de solo lectura para conciliaciones**: todo cambio pasa por servicios.
+- **Login protegido con CSRF** (DRF por defecto no lo exige a usuarios anónimos).
 - **Antes de dar por terminado un cambio en el motor:** `uv run pytest` en verde, incluido
   `test_reproduce_conciliacion_mayo_2026` si los datos están disponibles.
 - **Frontend:** si `pnpm run build` no compila, el cambio no está terminado.
@@ -194,7 +254,8 @@ En Windows la consola necesita `PYTHONIOENCODING=utf-8` para imprimir tildes des
 
 ## 10. Decisiones abiertas
 
-- Deduplicación de movimientos entre cartolas traslapadas (fase 2, por fecha + doc + monto + descripción).
+- Saldo inicial manual (sin planilla) para cuentas nuevas sin historial.
+- Permisos por usuario/comunidad (hoy los 3 usuarios ven y editan todo).
 - Pedir al cliente una columna "Nº operación" en la planilla de ingresos → cruce exacto de ingresos.
 - Tabla RUT ↔ depto por comunidad (aprendida de cruces confirmados).
 - Aviso de cheques caducados (> 60 días sin cobrar).

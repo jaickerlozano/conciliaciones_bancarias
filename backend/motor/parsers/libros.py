@@ -48,7 +48,12 @@ class LibroContable:
     tipo: TipoPartida
     bloques: dict[Periodo, list[PartidaLibro]] = field(default_factory=dict)
     periodos_cerrados: set[Periodo] = field(default_factory=set)
-    advertencias: list[str] = field(default_factory=list)
+    advertencias: list[str] = field(default_factory=list)  # de toda la planilla
+    advertencias_por_periodo: dict[Periodo, list[str]] = field(default_factory=dict)
+
+    def advertencias_de(self, periodo: Periodo) -> list[str]:
+        """Solo las advertencias sobre filas del bloque de ese período."""
+        return self.advertencias_por_periodo.get(periodo, [])
 
     def partidas(self, periodo: Periodo) -> list[PartidaLibro]:
         return self.bloques.get(periodo, [])
@@ -100,6 +105,13 @@ def _procesar_filas(filas, tipo: TipoPartida, nombre_archivo: str) -> LibroConta
     pendientes: list[tuple[int, PartidaLibro]] = []  # partidas del bloque en curso
     ultimo_cerrado: Periodo | None = None
     vistos: dict[int, int] = {}
+    inicio_bloque = 0  # índice en libro.advertencias donde empiezan las del bloque en curso
+
+    def asignar_advertencias(periodo: Periodo) -> None:
+        nonlocal inicio_bloque
+        nuevas = libro.advertencias[inicio_bloque:]
+        libro.advertencias_por_periodo.setdefault(periodo, []).extend(nuevas)
+        inicio_bloque = len(libro.advertencias)
 
     for nro_fila, fila in enumerate(filas, start=1):
         if columnas is None:
@@ -121,6 +133,7 @@ def _procesar_filas(filas, tipo: TipoPartida, nombre_archivo: str) -> LibroConta
                     "sus partidas quedan sin período."
                 )
                 pendientes = []
+                inicio_bloque = len(libro.advertencias)
                 continue
             periodo = Periodo(*mes_anio)
             if periodo in libro.periodos_cerrados:
@@ -130,6 +143,7 @@ def _procesar_filas(filas, tipo: TipoPartida, nombre_archivo: str) -> LibroConta
             libro.bloques.setdefault(periodo, []).extend(p for _, p in pendientes)
             libro.periodos_cerrados.add(periodo)
             _validar_total_cierre(libro, periodo, fila, columnas, nro_fila)
+            asignar_advertencias(periodo)
             pendientes = []
             ultimo_cerrado = periodo
             continue
@@ -157,6 +171,7 @@ def _procesar_filas(filas, tipo: TipoPartida, nombre_archivo: str) -> LibroConta
             libro.bloques.setdefault(ultimo_cerrado.siguiente(), []).extend(
                 p for _, p in pendientes
             )
+            asignar_advertencias(ultimo_cerrado.siguiente())
 
     for periodo, partidas in libro.bloques.items():
         _validar_fechas(libro, periodo, partidas)
@@ -245,6 +260,6 @@ def _validar_total_cierre(
 def _validar_fechas(libro: LibroContable, periodo: Periodo, partidas: list[PartidaLibro]) -> None:
     for p in partidas:
         if p.fecha and abs(p.fecha.year - periodo.anio) > 1:
-            libro.advertencias.append(
-                f"Comprobante {p.comprobante} ({periodo}): fecha sospechosa {p.fecha:%d/%m/%Y}."
-            )
+            aviso = f"Comprobante {p.comprobante} ({periodo}): fecha sospechosa {p.fecha:%d/%m/%Y}."
+            libro.advertencias.append(aviso)
+            libro.advertencias_por_periodo.setdefault(periodo, []).append(aviso)

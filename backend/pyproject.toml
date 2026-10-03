@@ -3,19 +3,26 @@ name = "conciliaciones-backend"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "django>=5.2,<6",
+    "django-environ>=0.14.0",
+    "djangorestframework>=3.18.1",
     "openpyxl>=3.1.5",
     "pdfplumber>=0.11.10",
+    "psycopg[binary]>=3.3.6",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "pytest-django>=4.14.0",
     "ruff>=0.16.10",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+DJANGO_SETTINGS_MODULE = "config.settings"
+addopts = "--reuse-db"
 markers = [
     "datos_reales: tests que usan los archivos reales del cliente (se omiten si no están disponibles)",
 ]

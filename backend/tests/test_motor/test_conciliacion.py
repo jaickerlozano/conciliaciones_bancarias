@@ -67,3 +67,30 @@ def test_advierte_cartola_de_otro_mes_y_saldo_discontinuo():
     cartola = _cartola(1_000, [], hasta=date(2026, 6, 30))
     r = conciliar(Periodo(2026, 5), apertura, [], [], cartola)
     assert len(r.advertencias) == 2
+
+
+def test_descarta_movimientos_repetidos_de_cartolas_traslapadas():
+    repetido_abono = MovimientoBancario(date(2026, 2, 2), "Transf. X", 351_821, es_cargo=False)
+    repetido_cargo = MovimientoBancario(date(2026, 2, 2), "Cheque", 66_010, True, "1587059")
+    nuevo = MovimientoBancario(date(2026, 2, 10), "Transf. Y", 100_000, es_cargo=False)
+    saldo_fin_enero = 1_000_000
+    apertura = EstadoApertura(
+        saldo_registro=saldo_fin_enero,
+        saldo_banco=saldo_fin_enero,
+        movimientos_cartola_anterior=[repetido_abono, repetido_cargo],
+    )
+    # la cartola de febrero parte antes de que se registraran los movimientos del 02/02
+    cartola = Cartola(
+        "Santander", "1", "303", date(2026, 1, 30), date(2026, 2, 27),
+        saldo_fin_enero - 351_821 + 66_010, saldo_fin_enero + 100_000,
+        [repetido_abono, repetido_cargo, nuevo],
+    )  # fmt: skip
+    ingreso = PartidaLibro(TipoPartida.INGRESO, 1, date(2026, 2, 10), 100_000)
+
+    r = conciliar(Periodo(2026, 2), apertura, [ingreso], [], cartola)
+
+    assert r.movimientos_descartados == [repetido_abono, repetido_cargo]
+    assert r.movimientos_no_contabilizados == []
+    assert r.cuadra
+    assert len(r.advertencias) == 1 and "traslapa" in r.advertencias[0]
+    assert r.estado_cierre().movimientos_cartola_anterior == cartola.movimientos

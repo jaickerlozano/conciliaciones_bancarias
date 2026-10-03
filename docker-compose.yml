@@ -1,0 +1,46 @@
+# Desarrollo local.
+#   Solo la base de datos (backend con uv en tu máquina):  docker compose up -d db
+#   Todo en contenedores:                                    docker compose up --build
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-conciliaciones}
+      POSTGRES_USER: ${POSTGRES_USER:-conciliaciones}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-conciliaciones}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py runserver 0.0.0.0:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-conciliaciones}:${POSTGRES_PASSWORD:-conciliaciones}@db:5432/${POSTGRES_DB:-conciliaciones}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-true}
+      MEDIA_ROOT: /app/media
+      CONCILIACION_DATOS_DIR: /datos
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - media:/app/media
+      - ../ingresos_egresos_cartolas:/datos:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  media:

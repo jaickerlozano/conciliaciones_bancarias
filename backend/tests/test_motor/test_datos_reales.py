@@ -107,3 +107,9 @@ def test_febrero_2026_detecta_traslape_de_cartolas(datos, ingresos, egresos):
 
     assert any("no coincide con el saldo final" in a for a in r.advertencias)
     assert r.diferencia == -(351_821 - 66_010)
+
+
+def test_advertencias_por_periodo(ingresos, egresos):
+    assert any("18/08/2226" in a for a in ingresos.advertencias_de(Periodo(2026, 8)))
+    assert ingresos.advertencias_de(Periodo(2026, 5)) == []
+    assert any("1364" in a for a in egresos.advertencias_de(Periodo(2026, 3)))  # decimales UF
