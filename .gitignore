@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+
+# Entorno
+.env
+.env.*
+!.env.example
+
+# Datos del cliente: NUNCA versionar (nombres, RUTs, montos reales)
+*.xlsx
+*.xlsm
+*.xls
+*.csv
+*.pdf
+media/
+uploads/
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.claude/settings.local.json
