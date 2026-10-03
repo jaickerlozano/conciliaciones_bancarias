@@ -1,11 +1,16 @@
+import tempfile
+from pathlib import Path
+
 from django.db.models import Q
+from django.http import HttpResponse
 from openpyxl import load_workbook
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from apps.comunidades.models import Comunidad, CuentaBancaria
+from apps.comunidades.models import Banco, Comunidad, CuentaBancaria
 from apps.comunidades.serializers import ComunidadSerializer, CuentaBancariaSerializer
 from apps.conciliaciones import servicios
 from apps.conciliaciones.serializers import (
@@ -13,6 +18,7 @@ from apps.conciliaciones.serializers import (
     ConciliacionDetalleSerializer,
 )
 from motor.dominio import MovimientoBancario, PartidaLibro, Periodo, TipoPartida
+from motor.parsers.cartolas.plantilla import escribir_plantilla
 
 
 class ComunidadViewSet(viewsets.ModelViewSet):
@@ -105,3 +111,26 @@ class CuentaBancariaViewSet(viewsets.ModelViewSet):
             d["saldo_banco"], cheques, depositos, movimientos, request.user,
         )  # fmt: skip
         return Response(ConciliacionDetalleSerializer(conciliacion).data, status=201)
+
+
+class BancosView(APIView):
+    """Bancos disponibles para crear cuentas."""
+
+    def get(self, request):
+        return Response([{"valor": v, "nombre": n} for v, n in Banco.choices])
+
+
+class PlantillaCartolaView(APIView):
+    """Descarga la plantilla estándar de cartola (Excel) para bancos/formatos no soportados."""
+
+    def get(self, request):
+        with tempfile.TemporaryDirectory() as tmp:
+            ruta = Path(tmp) / "plantilla_cartola.xlsx"
+            escribir_plantilla(ruta)
+            contenido = ruta.read_bytes()
+        respuesta = HttpResponse(
+            contenido,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        respuesta["Content-Disposition"] = 'attachment; filename="plantilla_cartola.xlsx"'
+        return respuesta

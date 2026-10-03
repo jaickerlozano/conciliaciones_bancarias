@@ -7,7 +7,7 @@ Reglas del proyecto, stack y comandos: ver [AGENTS.md](AGENTS.md).
 
 ## Inicio rápido
 
-Requisitos: Docker Desktop, [uv](https://docs.astral.sh/uv/).
+Requisitos: Docker Desktop, [uv](https://docs.astral.sh/uv/), Node 24 + pnpm.
 
 ```bash
 cp .env.example .env
@@ -18,8 +18,12 @@ uv sync
 uv run python manage.py migrate
 uv run python manage.py createsuperuser
 uv run python manage.py demo_cinema   # opcional: carga el piloto con datos reales
-uv run python manage.py runserver     # http://localhost:8000/admin
+uv run python manage.py runserver     # API en :8000 (admin técnico en /admin)
 uv run pytest
+
+cd ../frontend
+pnpm install
+pnpm dev                              # panel en http://localhost:5173
 ```
 
 Los tests y el comando `demo_cinema` buscan los archivos reales del cliente en

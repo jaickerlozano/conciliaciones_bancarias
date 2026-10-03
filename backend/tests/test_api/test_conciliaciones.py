@@ -170,3 +170,27 @@ def test_filtrar_comunidades(api, cuenta):
     assert nombres("q=robles") == ["Condominio Los Robles"]
     assert nombres("activa=true") == ["Edificio Prueba"]
     assert len(nombres("")) == 2
+
+
+def test_bancos_y_plantilla(api, apertura):
+    assert {"valor": "santander", "nombre": "Santander"} in api.get("/api/bancos/").json()
+    r = api.get("/api/plantilla-cartola/")
+    assert r.status_code == 200
+    assert r["Content-Disposition"].endswith('plantilla_cartola.xlsx"')
+    cuenta = api.get(f"/api/cuentas/{apertura.cuenta_id}/").json()
+    assert cuenta["ultima_conciliacion"] == {
+        "id": apertura.id, "periodo": "2026-04", "estado": "importada"
+    }  # fmt: skip
+
+
+def test_confirmar_todos(api, mayo_procesado):
+    from apps.conciliaciones.models import Cruce, TipoCruce
+
+    Cruce.objects.create(
+        conciliacion=mayo_procesado, partida=mayo_procesado.partidas.get(),
+        movimiento=mayo_procesado.movimientos.get(), tipo=TipoCruce.SUGERIDO,
+    )  # fmt: skip
+    r = api.post(f"/api/conciliaciones/{mayo_procesado.id}/confirmar-todos/")
+    assert r.status_code == 200
+    assert r.json()["resumen"]["cruces_por_revisar"] == 0
+    assert r.json()["comunidad_nombre"] == "Edificio Prueba"

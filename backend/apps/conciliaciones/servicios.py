@@ -519,6 +519,18 @@ def confirmar_cruce(cruce: Cruce, usuario) -> Cruce:
     return cruce
 
 
+@transaction.atomic
+def confirmar_todos(c: Conciliacion, usuario) -> int:
+    """Confirma todos los cruces por revisar. Devuelve cuántos confirmó."""
+    _exigir_editable(c)
+    pendientes = [
+        x for x in c.cruces.select_related("partida", "movimiento") if x.requiere_revision
+    ]
+    for cruce in pendientes:
+        confirmar_cruce(cruce, usuario)
+    return len(pendientes)
+
+
 def deshacer_cruce(cruce: Cruce, usuario) -> None:
     c = cruce.conciliacion
     _exigir_editable(c)

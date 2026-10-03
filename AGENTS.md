@@ -31,7 +31,7 @@ ingresos/egresos se registrarán directamente en el sistema.
 | 1 | Motor puro Python: parsers + cruce + cálculo. Criterio: reproducir mayo 2026 con diferencia 0 | ✅ Hecho |
 | 2 | Backend Django + DRF + PostgreSQL: modelos, carga de archivos, API, login | ✅ Hecho |
 | 2b | Simulación ene→may 2026 vs. conciliaciones del cliente: los 5 meses iguales, dif. $0 | ✅ Hecho |
-| 3 | Frontend React: carga mensual, mesa de trabajo de cruces, vista de conciliación | Pendiente |
+| 3 | Frontend React: carga mensual, mesa de trabajo de cruces, vista de conciliación | ✅ Hecho |
 | 4 | Salidas: PDF (WeasyPrint) y Excel (openpyxl) | Pendiente |
 | 5 | Más bancos y comunidades (pruebas antes de producción) | Pendiente |
 
@@ -42,11 +42,11 @@ ingresos/egresos se registrarán directamente en el sistema.
 | Motor | Python 3.12, openpyxl (modo `read_only`), pdfplumber. **Sin Django.** |
 | Backend | Django 5 + Django REST Framework, auth por sesión (cookie + CSRF), sin JWT |
 | BD | PostgreSQL 16 (Docker) |
-| Frontend | React + TypeScript + Vite, Tailwind CSS, TanStack Query, pnpm |
+| Frontend | React 19 + TypeScript + Vite, Tailwind CSS 4, TanStack Query, React Router, lucide-react, sonner, pnpm |
 | PDF salida | WeasyPrint (plantilla HTML/CSS) — requiere GTK/Pango: usar Docker en Windows |
 | Excel salida | openpyxl |
 | Tests | pytest + pytest-django (BD de tests en el Postgres de Docker), Vitest en frontend |
-| Lint | ruff (Python, línea 100), ESLint + `tsc` (frontend) |
+| Lint | ruff (Python, línea 100), oxlint + `tsc` estricto (frontend) |
 | Paquetes | `uv` (Python), `pnpm` (JS) |
 | Infra | Docker Compose: `db`, `backend`, `frontend` |
 
@@ -89,8 +89,33 @@ conciliaciones_bancarias/
 │       └── conftest.py        # fixture `datos` (archivos reales, se omite si no están)
 ├── docker-compose.yml     # db (Postgres 16) + backend
 ├── .env.example           # copiar a .env
-└── frontend/              # FASE 3
+└── frontend/
+    ├── vite.config.ts     # proxy /api y /admin -> Django (mismo origen: cookie + CSRF sin CORS)
+    └── src/
+        ├── api/           # cliente.ts (fetch + CSRF + errores), tipos.ts, consultas.ts (hooks)
+        ├── sesion/        # login por sesión, RequiereSesion
+        ├── lib/formato.ts # $1.379.448, dd/mm/aaaa, "Mayo 2026"
+        ├── componentes/   # Marco (barra, migas) y ui/ (Boton, Campos, Modal, Insignia, ...)
+        └── paginas/       # Ingresar, Comunidades, Comunidad, SaldoInicial,
+                           # conciliacion/ (Pasos, Archivos, Resumen, Revision, CruceManual)
 ```
+
+### Pantallas (panel del personal)
+
+1. **Comunidades:** buscador + filtro activas/inactivas/todas (en la URL), alta/edición.
+2. **Comunidad:** cuentas; por cuenta, tabla de meses (estado, saldo banco, diferencia) y botón
+   "Iniciar <mes siguiente>" (deshabilitado con motivo visible si el anterior no está cerrado).
+   Sin meses: "Configurar saldo inicial" (manual con cuadre en vivo, o importar hoja de planilla).
+3. **Conciliación:** pasos Archivos → Revisión → Cierre; carga por arrastre; resumen con la
+   estructura de la planilla del cliente y la diferencia destacada; pestañas Por revisar
+   (confirmar / "No corresponde" / confirmar todos), cheques, depósitos, no contabilizados
+   (con "Cruzar…" solo si hay contraparte del mismo monto), todos los cruces, advertencias e
+   historial. Acciones: cerrar (solo con diferencia $0 y nada por revisar), reabrir con motivo,
+   eliminar.
+
+Convenciones de UI: textos en español de Chile, montos con `pesos()` y clase `monto`
+(tabular-nums), colores de estado fijos (ver `index.css`), toda acción con resultado visible
+(toast abajo a la derecha) y confirmación en las destructivas.
 
 Las apps Django **usan** el motor; el motor **nunca** importa Django.
 Las vistas **no** contienen reglas de negocio: todo pasa por `apps/conciliaciones/servicios.py`
@@ -260,10 +285,11 @@ uv run python manage.py demo_cinema --reiniciar  # piloto: dic-25 importado, ene
 uv run python manage.py runserver         # http://localhost:8000/admin y /api/
 uv run python manage.py makemigrations    # tras cambiar modelos
 
-# Fase 3+ (frontend, desde frontend/)
+# Frontend (desde frontend/; requiere el backend en :8000)
 pnpm install
+pnpm dev                                  # http://localhost:5173
 pnpm run lint && pnpm run build           # build = prueba de fuego del tipado
-pnpm test
+pnpm test                                 # Vitest + Testing Library
 ```
 
 En Windows la consola necesita `PYTHONIOENCODING=utf-8` para imprimir tildes desde el CLI.

@@ -1,0 +1,37 @@
+@import 'tailwindcss';
+
+/* Tokens de diseño. Marca: verde petróleo sobrio (finanzas, calma). Estados con colores fijos
+   en toda la app: cuadra/cerrada = esmeralda, revisar = ámbar, diferencia = rosa,
+   procesada = cielo, saldo inicial = violeta, borrador = pizarra. */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --color-marca-50: #effaf8;
+  --color-marca-100: #d6f1ec;
+  --color-marca-200: #ade2d9;
+  --color-marca-300: #7cccc0;
+  --color-marca-400: #4aafa3;
+  --color-marca-500: #2f9488;
+  --color-marca-600: #22776e;
+  --color-marca-700: #1d5f59;
+  --color-marca-800: #1a4d49;
+  --color-marca-900: #18403d;
+  --color-marca-950: #0a2524;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+  body {
+    @apply bg-slate-50 text-slate-800 antialiased;
+  }
+  /* Montos siempre alineables */
+  .monto {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-marca-500;
+  }
+}

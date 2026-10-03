@@ -6,6 +6,7 @@ from apps.comunidades.models import Comunidad, CuentaBancaria
 class CuentaBancariaSerializer(serializers.ModelSerializer):
     banco_nombre = serializers.CharField(source="get_banco_display", read_only=True)
     comunidad_nombre = serializers.CharField(source="comunidad.nombre", read_only=True)
+    ultima_conciliacion = serializers.SerializerMethodField()
 
     class Meta:
         model = CuentaBancaria
@@ -17,7 +18,15 @@ class CuentaBancariaSerializer(serializers.ModelSerializer):
             "banco_nombre",
             "numero",
             "activa",
+            "ultima_conciliacion",
         ]
+
+    def get_ultima_conciliacion(self, obj) -> dict | None:
+        """El mes más reciente de la cuenta (para mostrar en qué va cada comunidad)."""
+        c = obj.conciliaciones.order_by("-anio", "-mes").first()
+        if c is None:
+            return None
+        return {"id": c.id, "periodo": str(c.periodo), "estado": c.estado}
 
 
 class ComunidadSerializer(serializers.ModelSerializer):

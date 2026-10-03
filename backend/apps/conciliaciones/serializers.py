@@ -91,11 +91,16 @@ class ConciliacionSerializer(serializers.ModelSerializer):
     periodo = serializers.SerializerMethodField()
     resumen = serializers.SerializerMethodField()
     cuenta_nombre = serializers.CharField(source="cuenta.__str__", read_only=True)
+    cuenta_numero = serializers.CharField(source="cuenta.numero", read_only=True)
+    banco_nombre = serializers.CharField(source="cuenta.get_banco_display", read_only=True)
+    comunidad_id = serializers.IntegerField(source="cuenta.comunidad_id", read_only=True)
+    comunidad_nombre = serializers.CharField(source="cuenta.comunidad.nombre", read_only=True)
 
     class Meta:
         model = Conciliacion
         fields = [
-            "id", "cuenta", "cuenta_nombre", "anio", "mes", "periodo", "estado",
+            "id", "cuenta", "cuenta_nombre", "cuenta_numero", "banco_nombre", "comunidad_id",
+            "comunidad_nombre", "anio", "mes", "periodo", "estado",
             "creada_en", "procesada_en", "cerrada_en", "resumen",
         ]  # fmt: skip
         read_only_fields = fields

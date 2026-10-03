@@ -34,6 +34,7 @@ class ConciliacionViewSet(
     POST   /api/conciliaciones/ID/procesar/
     POST   /api/conciliaciones/ID/cruces/          {partida, movimiento}  (cruce manual)
     POST   /api/conciliaciones/ID/cruces/CID/confirmar/
+    POST   /api/conciliaciones/ID/confirmar-todos/
     DELETE /api/conciliaciones/ID/cruces/CID/
     POST   /api/conciliaciones/ID/redondeo/        {monto}
     POST   /api/conciliaciones/ID/cerrar/
@@ -105,6 +106,12 @@ class ConciliacionViewSet(
     def confirmar_cruce(self, request, pk=None, cruce_id=None):
         cruce = servicios.confirmar_cruce(self._cruce(cruce_id), request.user)
         return self._detalle(cruce.conciliacion)
+
+    @action(detail=True, methods=["post"], url_path="confirmar-todos")
+    def confirmar_todos(self, request, pk=None):
+        c = self.get_object()
+        servicios.confirmar_todos(c, request.user)
+        return self._detalle(c)
 
     @action(detail=True, methods=["delete"], url_path=r"cruces/(?P<cruce_id>\d+)")
     def deshacer_cruce(self, request, pk=None, cruce_id=None):
