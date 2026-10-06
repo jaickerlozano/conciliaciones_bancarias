@@ -57,10 +57,29 @@ def test_cartola_santander_febrero_dos_paginas(datos):
     assert c.advertencias == []  # saldo inicial + movimientos == saldo final
 
 
-@pytest.mark.parametrize("mes", ["enero", "marzo", "abril"])
-def test_formatos_no_soportados_fallan_con_mensaje_claro(datos, mes):
+def test_formato_no_soportado_falla_con_mensaje_claro(datos):
+    """Enero es una consulta impresa como trazos vectoriales: no tiene texto que leer."""
     with pytest.raises(ErrorCartola, match="No se reconoce el formato"):
-        leer_cartola(datos / f"cartola_{mes}_2026.pdf")
+        leer_cartola(datos / "cartola_enero_2026.pdf")
+
+
+@pytest.mark.parametrize("mes", ["marzo", "abril"])
+def test_cartola_oficial_coincide_con_su_transcripcion_a_plantilla(datos, mes):
+    """El cliente reemplazó marzo y abril por las cartolas oficiales. Deben calzar con las
+    versiones que se habían transcrito a mano a la plantilla estándar."""
+    oficial = leer_cartola(datos / f"cartola_{mes}_2026.pdf")
+    plantilla = datos / "cartolas_estandar" / f"cartola_{mes}_2026.xlsx"
+    if not plantilla.exists():
+        pytest.skip("Falta la plantilla estándar transcrita")
+    transcrita = leer_cartola(plantilla)
+    assert oficial.advertencias == []
+    assert (oficial.saldo_inicial, oficial.saldo_final) == (
+        transcrita.saldo_inicial,
+        transcrita.saldo_final,
+    )
+    assert sorted((m.monto, m.es_cargo) for m in oficial.movimientos) == sorted(
+        (m.monto, m.es_cargo) for m in transcrita.movimientos
+    )
 
 
 def test_reproduce_conciliacion_mayo_2026(datos, ingresos, egresos):

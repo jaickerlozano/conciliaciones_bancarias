@@ -19,7 +19,8 @@ Usuarios: ~3 internos de Gaudi.
 cuentas y todo el flujo mensual, en español y guiado paso a paso. El **admin de Django es solo
 para el superusuario** (desarrollador): gestión de usuarios y soporte. El personal se crea como
 usuario normal (`is_staff=False`), sin acceso a `/admin`. Muchas comunidades, cada una con su banco (Santander, BCI,
-Banco de Chile, …). Piloto: **Comunidad Edificio CINEMA** (Santander, cta 0-000-03-81745-8).
+Banco de Chile, …). Pilotos: **Comunidad Edificio CINEMA** (Santander, cta 0-000-03-81745-8) y
+**Edificio Bustos 2166** (BCI, cta 29845203; datos en `../bustos/`).
 
 Por ahora las planillas Excel del cliente siguen siendo la fuente de datos. Más adelante
 ingresos/egresos se registrarán directamente en el sistema.
@@ -33,7 +34,7 @@ ingresos/egresos se registrarán directamente en el sistema.
 | 2b | Simulación ene→may 2026 vs. conciliaciones del cliente: los 5 meses iguales, dif. $0 | ✅ Hecho |
 | 3 | Frontend React: carga mensual, mesa de trabajo de cruces, vista de conciliación | ✅ Hecho |
 | 4 | Salidas: PDF (ReportLab) y Excel (openpyxl, con fórmulas) | ✅ Hecho |
-| 5 | Más bancos y comunidades (pruebas antes de producción) | Pendiente |
+| 5 | Más bancos y comunidades (pruebas antes de producción) | 🔄 BCI + Edificio Bustos 2166 hechos (jun–jul iguales al cliente) |
 
 ## 3. Stack
 
@@ -82,7 +83,7 @@ conciliaciones_bancarias/
 │   │       ├── servicios.py   # TODA la lógica de negocio (casos de uso)
 │   │       ├── views.py       # solo HTTP: valida entrada y llama a servicios
 │   │       ├── informes/      # datos.py (estructura común) → pdf.py y excel.py
-│   │       └── management/commands/demo_cinema.py
+│   │       └── management/commands/cargar_piloto.py  # pilotos cinema | bustos
 │   ├── Dockerfile
 │   └── tests/
 │       ├── test_motor/        # tests del motor (sin BD)
@@ -246,18 +247,22 @@ Diferencia               = saldo final de la cartola − saldo según conciliaci
   `*.xlsm`, `*.pdf`.
 - Fixtures sintéticas para tests: construirlas en código (ver `tests/test_motor/test_cruce.py`).
 
-### Formatos de cartola conocidos (Santander)
+### Formatos de cartola conocidos
 
-| Archivo | Formato | Estado |
+| Banco · archivo | Formato | Estado |
 |---|---|---|
-| feb, may 2026 | Cartola oficial PDF (texto) | ✅ `SantanderPDFOficial` |
-| mar 2026 | "Cartola Histórica" del portal (PDF sin saldos ni signo) | ❌ no soportado → plantilla estándar |
-| abr 2026 | "Cartola Histórica" con fuente sin mapa de caracteres (texto `(cid:..)`) | ❌ → plantilla estándar |
-| ene 2026 | "Consulta de movimientos" impresa como trazos vectoriales (sin texto) | ❌ → plantilla estándar |
+| Santander feb–may 2026 | Cartola oficial PDF (texto) | ✅ `SantanderPDFOficial` |
+| Santander ene 2026 | "Consulta de movimientos" impresa como trazos vectoriales (sin texto) | ❌ → plantilla estándar |
+| BCI jun–ago 2026 | Cartola oficial PDF, con SALDO DIARIO en cada fila | ✅ `BciPDFOficial` |
 | cualquiera | **Plantilla estándar Excel** (`CARTOLA ESTÁNDAR`) | ✅ `PlantillaEstandar` |
 
-Enero, marzo y abril se convirtieron una vez a plantilla estándar (verificadas fila a fila contra
-los saldos del banco) y están en `../ingresos_egresos_cartolas/cartolas_estandar/`.
+Marzo y abril de Cinema se reemplazaron por las cartolas oficiales (Nº 304/305); calzan con las
+transcripciones a plantilla que se habían hecho a mano (test de comparación). Enero sigue en
+plantilla estándar: `../ingresos_egresos_cartolas/cartolas_estandar/`.
+
+**BCI:** el sentido de cada monto (cargo/abono) se verifica con el saldo diario de la fila; si no
+calza, `ErrorCartola` con página y línea. La palabra "BCI" solo aparece en el pie legal de la
+última página. El resumen trae saldo anterior − cargos + abonos = saldo final.
 Se pidió al cliente usar siempre **Excel/CSV del portal** o la **cartola oficial PDF**. Para
 bancos/formatos no soportados, la **plantilla estándar** es el respaldo (el usuario copia ahí los
 movimientos); `escribir_plantilla()` genera la plantilla vacía para descargar.
@@ -290,22 +295,27 @@ uv run python -m motor.simular --datos ../../ingresos_egresos_cartolas \
 
 # Base de datos (desde la raíz; requiere Docker Desktop corriendo)
 cp .env.example .env                      # primera vez
-docker compose up -d db                   # Postgres en localhost:5432
-docker compose up --build                 # alternativa: db + backend en contenedores (:8000)
+docker compose up -d db                   # Postgres en localhost:5433 (5432 lo usan otros proyectos)
+docker compose up --build                 # alternativa: todo en contenedores (API :8010, panel :5180)
 
 # Django (desde backend/)
 uv run python manage.py migrate
 uv run python manage.py createsuperuser   # crear los usuarios (o desde /admin)
-uv run python manage.py demo_cinema --reiniciar  # piloto: dic-25 importado, ene–abr cerrados, may abierto
-uv run python manage.py runserver         # http://localhost:8000/admin y /api/
+uv run python manage.py cargar_piloto cinema --reiniciar  # dic-25 importado, ene–abr cerrados, may abierto
+uv run python manage.py cargar_piloto bustos --reiniciar  # may-26 importado, jun–jul cerrados, ago abierto
+uv run python manage.py runserver         # http://localhost:8010/admin y /api/ (puerto propio)
 uv run python manage.py makemigrations    # tras cambiar modelos
 
-# Frontend (desde frontend/; requiere el backend en :8000)
+# Frontend (desde frontend/; requiere el backend en :8010)
 pnpm install
-pnpm dev                                  # http://localhost:5173
+pnpm dev                                  # http://localhost:5180
 pnpm run lint && pnpm run build           # build = prueba de fuego del tipado
 pnpm test                                 # Vitest + Testing Library
 ```
+
+**Puertos propios del proyecto** (para convivir con otros proyectos en 8000/5173/5432):
+Django **8010** (`apps/desarrollo` cambia el puerto por defecto de `runserver`), Vite **5180**
+(`strictPort`; `CSRF_TRUSTED_ORIGINS` debe incluirlo) y Postgres **5433**.
 
 En Windows la consola necesita `PYTHONIOENCODING=utf-8` para imprimir tildes desde el CLI.
 
@@ -314,7 +324,8 @@ En Windows la consola necesita `PYTHONIOENCODING=utf-8` para imprimir tildes des
 - **Cartola ilegible** (escaneada, fuente codificada): el parser aborta con `ErrorCartola` y un
   mensaje que pide el formato correcto. Nunca devolver movimientos vacíos como si fuera válida.
 - **Archivos grandes:** rechazar planillas de más de 10.000 partidas en un request síncrono.
-- **Uploads:** validar extensión y tamaño (máx. 10 MB); guardar el archivo original asociado a la
+- **Uploads:** validar extensión y tamaño (máx. 10 MB; 50 MB la planilla de saldo inicial, que
+  acumula años de hojas); guardar el archivo original asociado a la
   conciliación para auditoría.
 - **Conciliación cerrada = inmutable.** Reabrir requiere acción explícita y queda registrada.
 - **El admin de Django es de solo lectura para conciliaciones**: todo cambio pasa por servicios.
@@ -330,6 +341,8 @@ En Windows la consola necesita `PYTHONIOENCODING=utf-8` para imprimir tildes des
 - Pedir al cliente una columna "Nº operación" en la planilla de ingresos → cruce exacto de ingresos.
 - Tabla RUT ↔ depto por comunidad (aprendida de cruces confirmados).
 - Aviso de cheques caducados (> 60 días sin cobrar).
+- Bustos, agosto 2026: el PAC ENEL quedó registrado como egreso #2444 por $397.314 y el banco
+  cobró $381.668 (P.A.C. CHILECTRA 20/08): diferencia de $15.646 a revisar con el cliente.
 - Errores detectados en planillas del cliente para informarle: cierre 2021-02 y 2024-04 de
   ingresos y 2025-02 de egresos no cuadran con la suma de sus partidas; comprobante 1261 con
   fecha 18/08/2226; comprobantes 23–26 de ingresos y 1217 de egresos duplicados.

@@ -194,3 +194,16 @@ def test_confirmar_todos(api, mayo_procesado):
     assert r.status_code == 200
     assert r.json()["resumen"]["cruces_por_revisar"] == 0
     assert r.json()["comunidad_nombre"] == "Edificio Prueba"
+
+
+def test_limite_de_tamano_por_tipo(settings):
+    """La planilla de saldo inicial puede pesar más que los archivos mensuales."""
+    from apps.conciliaciones import servicios
+    from apps.conciliaciones.servicios import ErrorConciliacion
+
+    settings.TAMANO_MAXIMO_ARCHIVO = 10
+    settings.TAMANO_MAXIMO_APERTURA = 100
+    grande = SimpleUploadedFile("planilla.xlsm", b"x" * 50)
+    servicios.validar_archivo(grande, "apertura")  # bajo el límite de apertura: OK
+    with pytest.raises(ErrorConciliacion, match="supera el máximo"):
+        servicios.validar_archivo(grande, "ingresos")
