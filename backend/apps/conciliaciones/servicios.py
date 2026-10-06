@@ -137,8 +137,13 @@ def validar_archivo(archivo: UploadedFile, tipo: str) -> None:
             f"'{archivo.name}' no es un archivo válido para {TipoArchivo(tipo).label.lower()}. "
             f"Formatos aceptados: {', '.join(permitidas)}."
         )
-    if archivo.size > settings.TAMANO_MAXIMO_ARCHIVO:
-        maximo = settings.TAMANO_MAXIMO_ARCHIVO // (1024 * 1024)
+    limite = (
+        settings.TAMANO_MAXIMO_APERTURA
+        if tipo == TipoArchivo.APERTURA
+        else settings.TAMANO_MAXIMO_ARCHIVO
+    )
+    if archivo.size > limite:
+        maximo = limite // (1024 * 1024)
         raise ErrorConciliacion(f"'{archivo.name}' supera el máximo de {maximo} MB.")
 
 

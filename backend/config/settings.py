@@ -90,7 +90,10 @@ MEDIA_ROOT = Path(env("MEDIA_ROOT", default=str(BASE_DIR / "media")))
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Archivos subidos (planillas y cartolas)
-TAMANO_MAXIMO_ARCHIVO = 10 * 1024 * 1024
+TAMANO_MAXIMO_ARCHIVO = 10 * 1024 * 1024  # planillas y cartolas mensuales
+# La planilla de conciliación del cliente (saldo inicial, se sube una vez por cuenta) acumula años
+# de hojas: la de Bustos pesa 21,6 MB. Solo se lee una hoja en modo read_only.
+TAMANO_MAXIMO_APERTURA = 50 * 1024 * 1024
 DATA_UPLOAD_MAX_MEMORY_SIZE = TAMANO_MAXIMO_ARCHIVO + 1024 * 1024
 
 # Sesión por cookie (usuarios internos). El frontend corre en el mismo origen (proxy de Vite).
@@ -113,7 +116,7 @@ REST_FRAMEWORK = {
     "UNAUTHENTICATED_USER": None,
 }
 
-# Dónde buscar los archivos reales del cliente (comando demo_cinema y tests)
+# Dónde buscar los archivos reales del cliente (comando cargar_piloto y tests)
 CONCILIACION_DATOS_DIR = Path(
     env("CONCILIACION_DATOS_DIR", default=str(RAIZ_REPO.parent / "ingresos_egresos_cartolas"))
 )

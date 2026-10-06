@@ -19,7 +19,8 @@ Usuarios: ~3 internos de Gaudi.
 cuentas y todo el flujo mensual, en español y guiado paso a paso. El **admin de Django es solo
 para el superusuario** (desarrollador): gestión de usuarios y soporte. El personal se crea como
 usuario normal (`is_staff=False`), sin acceso a `/admin`. Muchas comunidades, cada una con su banco (Santander, BCI,
-Banco de Chile, …). Piloto: **Comunidad Edificio CINEMA** (Santander, cta 0-000-03-81745-8).
+Banco de Chile, …). Pilotos: **Comunidad Edificio CINEMA** (Santander, cta 0-000-03-81745-8) y
+**Edificio Bustos 2166** (BCI, cta 29845203; datos en `../bustos/`).
 
 Por ahora las planillas Excel del cliente siguen siendo la fuente de datos. Más adelante
 ingresos/egresos se registrarán directamente en el sistema.
@@ -33,7 +34,7 @@ ingresos/egresos se registrarán directamente en el sistema.
 | 2b | Simulación ene→may 2026 vs. conciliaciones del cliente: los 5 meses iguales, dif. $0 | ✅ Hecho |
 | 3 | Frontend React: carga mensual, mesa de trabajo de cruces, vista de conciliación | ✅ Hecho |
 | 4 | Salidas: PDF (ReportLab) y Excel (openpyxl, con fórmulas) | ✅ Hecho |
-| 5 | Más bancos y comunidades (pruebas antes de producción) | Pendiente |
+| 5 | Más bancos y comunidades (pruebas antes de producción) | 🔄 BCI + Edificio Bustos 2166 hechos (jun–jul iguales al cliente) |
 
 ## 3. Stack
 
@@ -82,7 +83,7 @@ conciliaciones_bancarias/
 │   │       ├── servicios.py   # TODA la lógica de negocio (casos de uso)
 │   │       ├── views.py       # solo HTTP: valida entrada y llama a servicios
 │   │       ├── informes/      # datos.py (estructura común) → pdf.py y excel.py
-│   │       └── management/commands/demo_cinema.py
+│   │       └── management/commands/cargar_piloto.py  # pilotos cinema | bustos
 │   ├── Dockerfile
 │   └── tests/
 │       ├── test_motor/        # tests del motor (sin BD)
@@ -300,7 +301,8 @@ docker compose up --build                 # alternativa: todo en contenedores (A
 # Django (desde backend/)
 uv run python manage.py migrate
 uv run python manage.py createsuperuser   # crear los usuarios (o desde /admin)
-uv run python manage.py demo_cinema --reiniciar  # piloto: dic-25 importado, ene–abr cerrados, may abierto
+uv run python manage.py cargar_piloto cinema --reiniciar  # dic-25 importado, ene–abr cerrados, may abierto
+uv run python manage.py cargar_piloto bustos --reiniciar  # may-26 importado, jun–jul cerrados, ago abierto
 uv run python manage.py runserver         # http://localhost:8010/admin y /api/ (puerto propio)
 uv run python manage.py makemigrations    # tras cambiar modelos
 
@@ -322,7 +324,8 @@ En Windows la consola necesita `PYTHONIOENCODING=utf-8` para imprimir tildes des
 - **Cartola ilegible** (escaneada, fuente codificada): el parser aborta con `ErrorCartola` y un
   mensaje que pide el formato correcto. Nunca devolver movimientos vacíos como si fuera válida.
 - **Archivos grandes:** rechazar planillas de más de 10.000 partidas en un request síncrono.
-- **Uploads:** validar extensión y tamaño (máx. 10 MB); guardar el archivo original asociado a la
+- **Uploads:** validar extensión y tamaño (máx. 10 MB; 50 MB la planilla de saldo inicial, que
+  acumula años de hojas); guardar el archivo original asociado a la
   conciliación para auditoría.
 - **Conciliación cerrada = inmutable.** Reabrir requiere acción explícita y queda registrada.
 - **El admin de Django es de solo lectura para conciliaciones**: todo cambio pasa por servicios.
@@ -338,6 +341,8 @@ En Windows la consola necesita `PYTHONIOENCODING=utf-8` para imprimir tildes des
 - Pedir al cliente una columna "Nº operación" en la planilla de ingresos → cruce exacto de ingresos.
 - Tabla RUT ↔ depto por comunidad (aprendida de cruces confirmados).
 - Aviso de cheques caducados (> 60 días sin cobrar).
+- Bustos, agosto 2026: el PAC ENEL quedó registrado como egreso #2444 por $397.314 y el banco
+  cobró $381.668 (P.A.C. CHILECTRA 20/08): diferencia de $15.646 a revisar con el cliente.
 - Errores detectados en planillas del cliente para informarle: cierre 2021-02 y 2024-04 de
   ingresos y 2025-02 de egresos no cuadran con la suma de sus partidas; comprobante 1261 con
   fecha 18/08/2226; comprobantes 23–26 de ingresos y 1217 de egresos duplicados.

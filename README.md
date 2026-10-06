@@ -17,7 +17,7 @@ cd backend
 uv sync
 uv run python manage.py migrate
 uv run python manage.py createsuperuser
-uv run python manage.py demo_cinema   # opcional: carga el piloto con datos reales
+uv run python manage.py cargar_piloto cinema   # opcional: pilotos con datos reales (cinema | bustos)
 uv run python manage.py runserver     # API en :8010 (admin técnico en /admin)
 uv run pytest
 
@@ -26,5 +26,5 @@ pnpm install
 pnpm dev                              # panel en http://localhost:5180
 ```
 
-Los tests y el comando `demo_cinema` buscan los archivos reales del cliente en
-`../ingresos_egresos_cartolas/` (o en `$CONCILIACION_DATOS_DIR`); los tests se omiten si no están.
+Los tests y el comando `cargar_piloto` buscan los archivos reales del cliente en
+`../ingresos_egresos_cartolas/` y `../bustos/` (o en `$CONCILIACION_DATOS_DIR` / `$CONCILIACION_BUSTOS_DIR`); los tests se omiten si no están.
