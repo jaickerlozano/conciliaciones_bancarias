@@ -18,9 +18,10 @@ SECRET_KEY = env(
     default="solo-desarrollo-no-usar-en-produccion" if DEBUG else environ.Env.NOTSET,
 )
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
-CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=["http://localhost:5173"])
+CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=["http://localhost:5180"])
 
 INSTALLED_APPS = [
+    "apps.desarrollo",  # antes de staticfiles: runserver en el puerto 8010
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -65,7 +66,7 @@ WSGI_APPLICATION = "config.wsgi.application"
 DATABASES = {
     "default": env.db(
         "DATABASE_URL",
-        default="postgres://conciliaciones:conciliaciones@localhost:5432/conciliaciones",
+        default="postgres://conciliaciones:conciliaciones@localhost:5433/conciliaciones",
     )
 }
 

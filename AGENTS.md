@@ -290,22 +290,26 @@ uv run python -m motor.simular --datos ../../ingresos_egresos_cartolas \
 
 # Base de datos (desde la raíz; requiere Docker Desktop corriendo)
 cp .env.example .env                      # primera vez
-docker compose up -d db                   # Postgres en localhost:5432
-docker compose up --build                 # alternativa: db + backend en contenedores (:8000)
+docker compose up -d db                   # Postgres en localhost:5433 (5432 lo usan otros proyectos)
+docker compose up --build                 # alternativa: todo en contenedores (API :8010, panel :5180)
 
 # Django (desde backend/)
 uv run python manage.py migrate
 uv run python manage.py createsuperuser   # crear los usuarios (o desde /admin)
 uv run python manage.py demo_cinema --reiniciar  # piloto: dic-25 importado, ene–abr cerrados, may abierto
-uv run python manage.py runserver         # http://localhost:8000/admin y /api/
+uv run python manage.py runserver         # http://localhost:8010/admin y /api/ (puerto propio)
 uv run python manage.py makemigrations    # tras cambiar modelos
 
-# Frontend (desde frontend/; requiere el backend en :8000)
+# Frontend (desde frontend/; requiere el backend en :8010)
 pnpm install
-pnpm dev                                  # http://localhost:5173
+pnpm dev                                  # http://localhost:5180
 pnpm run lint && pnpm run build           # build = prueba de fuego del tipado
 pnpm test                                 # Vitest + Testing Library
 ```
+
+**Puertos propios del proyecto** (para convivir con otros proyectos en 8000/5173/5432):
+Django **8010** (`apps/desarrollo` cambia el puerto por defecto de `runserver`), Vite **5180**
+(`strictPort`; `CSRF_TRUSTED_ORIGINS` debe incluirlo) y Postgres **5433**.
 
 En Windows la consola necesita `PYTHONIOENCODING=utf-8` para imprimir tildes desde el CLI.
 

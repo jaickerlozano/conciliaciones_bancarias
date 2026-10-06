@@ -30,3 +30,9 @@ uploads/
 .DS_Store
 Thumbs.db
 .claude/settings.local.json
+
+# Índice local de CodeGraph
+.codegraph/
+
+# Registro local de skills (rutas absolutas de la máquina)
+.atl/
