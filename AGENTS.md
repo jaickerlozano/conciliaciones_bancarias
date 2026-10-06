@@ -246,18 +246,22 @@ Diferencia               = saldo final de la cartola − saldo según conciliaci
   `*.xlsm`, `*.pdf`.
 - Fixtures sintéticas para tests: construirlas en código (ver `tests/test_motor/test_cruce.py`).
 
-### Formatos de cartola conocidos (Santander)
+### Formatos de cartola conocidos
 
-| Archivo | Formato | Estado |
+| Banco · archivo | Formato | Estado |
 |---|---|---|
-| feb, may 2026 | Cartola oficial PDF (texto) | ✅ `SantanderPDFOficial` |
-| mar 2026 | "Cartola Histórica" del portal (PDF sin saldos ni signo) | ❌ no soportado → plantilla estándar |
-| abr 2026 | "Cartola Histórica" con fuente sin mapa de caracteres (texto `(cid:..)`) | ❌ → plantilla estándar |
-| ene 2026 | "Consulta de movimientos" impresa como trazos vectoriales (sin texto) | ❌ → plantilla estándar |
+| Santander feb–may 2026 | Cartola oficial PDF (texto) | ✅ `SantanderPDFOficial` |
+| Santander ene 2026 | "Consulta de movimientos" impresa como trazos vectoriales (sin texto) | ❌ → plantilla estándar |
+| BCI jun–ago 2026 | Cartola oficial PDF, con SALDO DIARIO en cada fila | ✅ `BciPDFOficial` |
 | cualquiera | **Plantilla estándar Excel** (`CARTOLA ESTÁNDAR`) | ✅ `PlantillaEstandar` |
 
-Enero, marzo y abril se convirtieron una vez a plantilla estándar (verificadas fila a fila contra
-los saldos del banco) y están en `../ingresos_egresos_cartolas/cartolas_estandar/`.
+Marzo y abril de Cinema se reemplazaron por las cartolas oficiales (Nº 304/305); calzan con las
+transcripciones a plantilla que se habían hecho a mano (test de comparación). Enero sigue en
+plantilla estándar: `../ingresos_egresos_cartolas/cartolas_estandar/`.
+
+**BCI:** el sentido de cada monto (cargo/abono) se verifica con el saldo diario de la fila; si no
+calza, `ErrorCartola` con página y línea. La palabra "BCI" solo aparece en el pie legal de la
+última página. El resumen trae saldo anterior − cargos + abonos = saldo final.
 Se pidió al cliente usar siempre **Excel/CSV del portal** o la **cartola oficial PDF**. Para
 bancos/formatos no soportados, la **plantilla estándar** es el respaldo (el usuario copia ahí los
 movimientos); `escribir_plantilla()` genera la plantilla vacía para descargar.
