@@ -323,7 +323,9 @@ En Windows la consola necesita `PYTHONIOENCODING=utf-8` para imprimir tildes des
 
 - **Cartola ilegible** (escaneada, fuente codificada): el parser aborta con `ErrorCartola` y un
   mensaje que pide el formato correcto. Nunca devolver movimientos vacíos como si fuera válida.
-- **Archivos grandes:** rechazar planillas de más de 10.000 partidas en un request síncrono.
+- **Archivos grandes:** las planillas son acumuladas (años de historia), así que el límite es por
+  mes: máx. 5.000 partidas en el bloque que se concilia; el archivo completo tiene un tope de
+  seguridad de 200.000 partidas (`servicios.validar_tamano_libro`).
 - **Uploads:** validar extensión y tamaño (máx. 10 MB; 50 MB la planilla de saldo inicial, que
   acumula años de hojas); guardar el archivo original asociado a la
   conciliación para auditoría.
