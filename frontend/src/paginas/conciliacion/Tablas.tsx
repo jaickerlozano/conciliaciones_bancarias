@@ -85,6 +85,7 @@ const TIPOS_CRUCE: Record<TipoCruce, { texto: string; tono: Tono }> = {
   monto_fecha: { texto: 'Monto y fecha', tono: 'cielo' },
   sugerido: { texto: 'Sugerido', tono: 'ambar' },
   manual: { texto: 'Manual', tono: 'violeta' },
+  agrupado: { texto: 'Agrupado', tono: 'cielo' },
 }
 
 export function InsigniaTipoCruce({ tipo }: { tipo: TipoCruce }) {
