@@ -36,7 +36,7 @@ class ConciliacionViewSet(
     DELETE /api/conciliaciones/ID/
     POST   /api/conciliaciones/ID/archivos/        multipart {tipo, archivo}
     POST   /api/conciliaciones/ID/procesar/
-    POST   /api/conciliaciones/ID/cruces/          {partida, movimiento}  (cruce manual)
+    POST   /api/conciliaciones/ID/cruces/          {partida | partidas: [ids], movimiento}
     POST   /api/conciliaciones/ID/cruces/CID/confirmar/
     POST   /api/conciliaciones/ID/confirmar-todos/
     DELETE /api/conciliaciones/ID/cruces/CID/
@@ -94,11 +94,14 @@ class ConciliacionViewSet(
         c = self.get_object()
         datos = CruceManualSerializer(data=request.data)
         datos.is_valid(raise_exception=True)
-        partida = get_object_or_404(Partida, pk=datos.validated_data["partida"], conciliacion=c)
+        partidas = [
+            get_object_or_404(Partida, pk=pid, conciliacion=c)
+            for pid in datos.validated_data["ids_partidas"]
+        ]
         movimiento = get_object_or_404(
             Movimiento, pk=datos.validated_data["movimiento"], conciliacion=c
         )
-        servicios.cruzar_manual(c, partida, movimiento, request.user)
+        servicios.cruzar_manual(c, partidas, movimiento, request.user)
         return self._detalle(c, status=201)
 
     def _cruce(self, cruce_id) -> Cruce:

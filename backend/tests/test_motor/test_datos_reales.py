@@ -188,3 +188,16 @@ def test_nunoa_junio_2026_cheque_cobrado_por_menos_cuadra_sin_redondeo(nunoa_jun
     assert r.diferencia == 0
     diferencias = [p for p in r.cheques_pendientes if p.origen == Origen.DIFERENCIA]
     assert [p.monto for p in diferencias] == [9_000]
+
+
+def test_nunoa_junio_2026_deposito_agrupado_de_dos_ingresos_de_mayo(nunoa_junio):
+    """El abono de $285.796 del 03/06 es la suma de dos ingresos de mayo (arrastrados como
+    depósitos pendientes): se cruza como grupo sugerido y la conciliación sigue cuadrando."""
+    from motor.dominio import TipoCruce
+
+    r = nunoa_junio
+    agrupados = [c for c in r.cruces if c.movimiento.monto == 285_796 and not c.movimiento.es_cargo]
+    assert sorted(c.partida.comprobante for c in agrupados) == [34917, 34918]
+    assert all(c.tipo == TipoCruce.AGRUPADO and c.requiere_revision for c in agrupados)
+    assert len({c.grupo for c in agrupados}) == 1
+    assert r.diferencia == 0

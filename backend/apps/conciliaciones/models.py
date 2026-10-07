@@ -142,15 +142,23 @@ class TipoCruce(models.TextChoices):
     CHEQUE = "cheque", "Nº de cheque"
     MONTO_FECHA = "monto_fecha", "Monto y fecha"
     SUGERIDO = "sugerido", "Sugerido (revisar)"
+    AGRUPADO = "agrupado", "Agrupado (revisar)"
     MANUAL = "manual", "Manual"
 
 
+TIPOS_A_REVISAR = (TipoCruce.SUGERIDO, TipoCruce.AGRUPADO)
+
+
 class Cruce(models.Model):
+    """Una partida cruzada con un movimiento. Varias partidas pueden cruzarse con el mismo
+    movimiento (cruce agrupado): esos cruces comparten `grupo` y se confirman o deshacen juntos."""
+
     conciliacion = models.ForeignKey(Conciliacion, on_delete=models.CASCADE, related_name="cruces")
     partida = models.OneToOneField(Partida, on_delete=models.CASCADE, related_name="cruce")
-    movimiento = models.OneToOneField(Movimiento, on_delete=models.CASCADE, related_name="cruce")
+    movimiento = models.ForeignKey(Movimiento, on_delete=models.CASCADE, related_name="cruces")
     tipo = models.CharField(max_length=12, choices=TipoCruce.choices)
     nota = models.CharField(max_length=255, blank=True)
+    grupo = models.CharField(max_length=40, blank=True)
     confirmado = models.BooleanField(default=False)
     confirmado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
@@ -159,7 +167,7 @@ class Cruce(models.Model):
 
     @property
     def requiere_revision(self) -> bool:
-        return not self.confirmado and (self.tipo == TipoCruce.SUGERIDO or bool(self.nota))
+        return not self.confirmado and (self.tipo in TIPOS_A_REVISAR or bool(self.nota))
 
 
 class TipoArchivo(models.TextChoices):

@@ -20,6 +20,7 @@ from django.utils import timezone
 
 from apps.comunidades.models import CuentaBancaria
 from apps.conciliaciones.models import (
+    TIPOS_A_REVISAR,
     AccionEvento,
     ArchivoCargado,
     Conciliacion,
@@ -95,7 +96,7 @@ def calcular_resumen(c: Conciliacion) -> Resumen:
         depositos=Sum("monto", filter=Q(tipo=TipoPartida.INGRESO), default=0),
     )
     no_contabilizados = (
-        c.movimientos.filter(cruce__isnull=True)
+        c.movimientos.filter(cruces__isnull=True)
         .exclude(origen=OrigenMovimiento.REPETIDO)
         .aggregate(
             total=Sum(
@@ -109,7 +110,7 @@ def calcular_resumen(c: Conciliacion) -> Resumen:
         )["total"]
     )
     por_revisar = (
-        c.cruces.filter(confirmado=False).filter(Q(tipo=TipoCruce.SUGERIDO) | ~Q(nota="")).count()
+        c.cruces.filter(confirmado=False).filter(Q(tipo__in=TIPOS_A_REVISAR) | ~Q(nota="")).count()
     )
     conciliacion = (
         c.saldo_registro + pendientes["cheques"] - pendientes["depositos"] + no_contabilizados
@@ -245,7 +246,7 @@ def _nuevo_movimiento(c: Conciliacion, m: dominio.MovimientoBancario, origen: st
 def apertura_desde(previa: Conciliacion) -> dominio.EstadoApertura:
     """Los pendientes de la conciliación anterior son la apertura de la siguiente."""
     partidas = previa.partidas.filter(cruce__isnull=True)
-    sin_cruce = previa.movimientos.filter(cruce__isnull=True).exclude(
+    sin_cruce = previa.movimientos.filter(cruces__isnull=True).exclude(
         origen=OrigenMovimiento.REPETIDO
     )
     de_la_cartola = previa.movimientos.filter(
@@ -544,22 +545,43 @@ def _persistir_resultado(c: Conciliacion, r: dominio.ResultadoConciliacion) -> N
             movimiento=movimientos[id(x.movimiento)],
             tipo=x.tipo.value,
             nota=x.nota[:255],
+            grupo=x.grupo[:40],  # los cruces agrupados comparten el mismo movimiento
         )
         for x in r.cruces
     )
 
 
+def _del_grupo(cruce: Cruce) -> list[Cruce]:
+    """El cruce y, si es agrupado, los demás de su grupo (actúan siempre juntos)."""
+    if not cruce.grupo:
+        return [cruce]
+    return list(
+        cruce.conciliacion.cruces.filter(grupo=cruce.grupo)
+        .select_related("partida", "movimiento")
+        .order_by("partida__fecha", "partida__comprobante")
+    )
+
+
+def _describir(cruces: list[Cruce]) -> str:
+    comprobantes = ", ".join(str(x.partida.comprobante) for x in cruces)
+    mov = cruces[0].movimiento
+    etiqueta = "Comprobantes" if len(cruces) > 1 else "Comprobante"
+    return f"{etiqueta} {comprobantes} ↔ {mov.fecha:%d/%m} {fmt_clp(mov.monto)}"
+
+
+@transaction.atomic
 def confirmar_cruce(cruce: Cruce, usuario) -> Cruce:
+    """Confirma el cruce; si es parte de un grupo, confirma el grupo completo."""
     _exigir_editable(cruce.conciliacion)
-    cruce.confirmado = True
-    cruce.confirmado_por = usuario
-    cruce.confirmado_en = timezone.now()
-    cruce.save()
-    _evento(
-        cruce.conciliacion, usuario, AccionEvento.CRUCE_CONFIRMADO,
-        f"Comprobante {cruce.partida.comprobante} ↔ {cruce.movimiento.fecha:%d/%m} "
-        f"{fmt_clp(cruce.movimiento.monto)}",
-    )  # fmt: skip
+    grupo = _del_grupo(cruce)
+    ahora = timezone.now()
+    for x in grupo:
+        x.confirmado = True
+        x.confirmado_por = usuario
+        x.confirmado_en = ahora
+        x.save()
+    _evento(cruce.conciliacion, usuario, AccionEvento.CRUCE_CONFIRMADO, _describir(grupo))
+    cruce.refresh_from_db()
     return cruce
 
 
@@ -570,21 +592,26 @@ def confirmar_todos(c: Conciliacion, usuario) -> int:
     pendientes = [
         x for x in c.cruces.select_related("partida", "movimiento") if x.requiere_revision
     ]
+    grupos_confirmados: set[str] = set()
     for cruce in pendientes:
+        if cruce.grupo in grupos_confirmados:
+            continue  # ya se confirmó junto con su grupo
+        if cruce.grupo:
+            grupos_confirmados.add(cruce.grupo)
         confirmar_cruce(cruce, usuario)
     return len(pendientes)
 
 
 @transaction.atomic
 def deshacer_cruce(cruce: Cruce, usuario) -> None:
+    """Deshace el cruce; si es parte de un grupo, deshace el grupo completo."""
     c = cruce.conciliacion
     _exigir_editable(c)
-    detalle = (
-        f"Comprobante {cruce.partida.comprobante} ↔ {cruce.movimiento.fecha:%d/%m} "
-        f"{fmt_clp(cruce.movimiento.monto)}"
-    )
-    _quitar_diferencia_de_cheque(cruce)
-    cruce.delete()
+    grupo = _del_grupo(cruce)
+    detalle = _describir(grupo)
+    for x in grupo:
+        _quitar_diferencia_de_cheque(x)
+        x.delete()
     _evento(c, usuario, AccionEvento.CRUCE_DESHECHO, detalle)
 
 
@@ -593,7 +620,7 @@ def _quitar_diferencia_de_cheque(cruce: Cruce) -> None:
     el motor sobra (el egreso y el cargo vuelven completos a pendientes): se elimina."""
     partida, movimiento = cruce.partida, cruce.movimiento
     dif = partida.monto - movimiento.monto
-    if cruce.tipo != TipoCruce.CHEQUE or abs(dif) <= MAX_DIFERENCIA_REDONDEO:
+    if cruce.tipo != TipoCruce.CHEQUE or cruce.grupo or abs(dif) <= MAX_DIFERENCIA_REDONDEO:
         return
     if dif > 0:
         sobrante = cruce.conciliacion.partidas.filter(
@@ -607,7 +634,7 @@ def _quitar_diferencia_de_cheque(cruce: Cruce) -> None:
     else:
         sobrante = cruce.conciliacion.movimientos.filter(
             origen=OrigenMovimiento.DIFERENCIA,
-            cruce__isnull=True,
+            cruces__isnull=True,
             es_cargo=True,
             documento=movimiento.documento,
             monto=-dif,
@@ -617,37 +644,57 @@ def _quitar_diferencia_de_cheque(cruce: Cruce) -> None:
 
 
 @transaction.atomic
-def cruzar_manual(c: Conciliacion, partida: Partida, movimiento: Movimiento, usuario) -> Cruce:
+def cruzar_manual(
+    c: Conciliacion, partidas: list[Partida], movimiento: Movimiento, usuario
+) -> list[Cruce]:
+    """Cruza una o varias partidas con un movimiento. Con varias (ej. dos ingresos depositados
+    juntos), su suma debe ser exactamente el monto del movimiento y quedan como un grupo."""
     _exigir_editable(c)
-    if partida.conciliacion_id != c.id or movimiento.conciliacion_id != c.id:
-        raise ErrorConciliacion("La partida y el movimiento deben ser de esta conciliación.")
-    if hasattr(partida, "cruce") or hasattr(movimiento, "cruce"):
+    if not partidas:
+        raise ErrorConciliacion("Indique al menos una partida para cruzar.")
+    if len({p.id for p in partidas}) != len(partidas):
+        raise ErrorConciliacion("Hay partidas repetidas en el cruce.")
+    if any(p.conciliacion_id != c.id for p in partidas) or movimiento.conciliacion_id != c.id:
+        raise ErrorConciliacion("Las partidas y el movimiento deben ser de esta conciliación.")
+    if any(hasattr(p, "cruce") for p in partidas) or movimiento.cruces.exists():
         raise ErrorConciliacion("La partida o el movimiento ya están cruzados; deshaga ese cruce.")
     if movimiento.origen == OrigenMovimiento.REPETIDO:
         raise ErrorConciliacion("Ese movimiento está repetido de la cartola anterior.")
-    if (partida.tipo == TipoPartida.EGRESO) != movimiento.es_cargo:
+    if any((p.tipo == TipoPartida.EGRESO) != movimiento.es_cargo for p in partidas):
         raise ErrorConciliacion(
             "Un egreso solo se cruza con un cargo, y un ingreso solo con un abono."
         )
-    if partida.monto != movimiento.monto:
+    suma = sum(p.monto for p in partidas)
+    if suma != movimiento.monto:
+        if len(partidas) == 1:
+            raise ErrorConciliacion(
+                f"Los montos no coinciden: libro {fmt_clp(suma)}, "
+                f"banco {fmt_clp(movimiento.monto)}."
+            )
         raise ErrorConciliacion(
-            f"Los montos no coinciden: libro {fmt_clp(partida.monto)}, "
-            f"banco {fmt_clp(movimiento.monto)}."
+            f"Los montos no coinciden: las {len(partidas)} partidas suman {fmt_clp(suma)} y el "
+            f"movimiento es de {fmt_clp(movimiento.monto)}."
         )
-    cruce = Cruce.objects.create(
-        conciliacion=c,
-        partida=partida,
-        movimiento=movimiento,
-        tipo=TipoCruce.MANUAL,
-        confirmado=True,
-        confirmado_por=usuario,
-        confirmado_en=timezone.now(),
-    )
-    _evento(
-        c, usuario, AccionEvento.CRUCE_MANUAL,
-        f"Comprobante {partida.comprobante} ↔ {movimiento.fecha:%d/%m} {fmt_clp(movimiento.monto)}",
-    )  # fmt: skip
-    return cruce
+    agrupado = len(partidas) > 1
+    nota = f"Cruce agrupado: {len(partidas)} partidas suman {fmt_clp(suma)}." if agrupado else ""
+    ahora = timezone.now()
+    cruces = [
+        Cruce.objects.create(
+            conciliacion=c,
+            partida=p,
+            movimiento=movimiento,
+            tipo=TipoCruce.MANUAL,
+            nota=nota,
+            # un movimiento está en a lo más un grupo: su id basta para identificarlo
+            grupo=f"M{movimiento.id}" if agrupado else "",
+            confirmado=True,
+            confirmado_por=usuario,
+            confirmado_en=ahora,
+        )
+        for p in sorted(partidas, key=lambda p: (p.fecha is None, p.fecha, p.comprobante or 0))
+    ]
+    _evento(c, usuario, AccionEvento.CRUCE_MANUAL, _describir(cruces))
+    return cruces
 
 
 def ajustar_redondeo(c: Conciliacion, monto: int, usuario) -> Conciliacion:

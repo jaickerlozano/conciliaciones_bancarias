@@ -239,3 +239,156 @@ def test_limite_de_partidas_es_por_mes_no_por_historia(monkeypatch):
     libro.bloques[Periodo(2026, 7)] = partidas(3)  # total 22 > tope del archivo
     with pytest.raises(ErrorConciliacion, match="22 partidas en total"):
         servicios.validar_tamano_libro(libro, Periodo(2026, 7), "ingresos")
+
+
+# --- cruces agrupados (varias partidas <-> un movimiento)
+
+
+def _ingreso(c, comprobante, monto):
+    from datetime import date
+
+    from apps.conciliaciones.models import OrigenPartida, Partida, TipoPartida
+
+    return Partida.objects.create(
+        conciliacion=c, tipo=TipoPartida.INGRESO, origen=OrigenPartida.PERIODO,
+        comprobante=comprobante, fecha=date(2026, 5, 28), monto=monto,
+    )  # fmt: skip
+
+
+def _abono(c, monto):
+    from datetime import date
+
+    from apps.conciliaciones.models import Movimiento, OrigenMovimiento
+
+    return Movimiento.objects.create(
+        conciliacion=c, origen=OrigenMovimiento.PERIODO, fecha=date(2026, 6, 3),
+        descripcion="Depósito", monto=monto, es_cargo=False,
+    )  # fmt: skip
+
+
+def test_cruce_manual_agrupado(api, mayo_procesado):
+    url = f"/api/conciliaciones/{mayo_procesado.id}"
+    a, b = _ingreso(mayo_procesado, 2, 30_000), _ingreso(mayo_procesado, 3, 20_000)
+    deposito = _abono(mayo_procesado, 50_000)
+    suelto = mayo_procesado.partidas.get(comprobante=1)  # 50.000
+
+    r = api.post(
+        f"{url}/cruces/", {"partidas": [a.id, suelto.id], "movimiento": deposito.id}, format="json"
+    )
+    assert r.status_code == 400
+    assert "suman $80.000" in r.json()["detail"]
+
+    r = api.post(
+        f"{url}/cruces/", {"partidas": [a.id, b.id], "movimiento": deposito.id}, format="json"
+    )
+    assert r.status_code == 201, r.json()
+    grupo = [x for x in r.json()["cruces"] if x["movimiento"]["id"] == deposito.id]
+    assert sorted(x["partida"]["comprobante"] for x in grupo) == [2, 3]
+    assert all(x["tipo"] == "manual" and x["confirmado"] for x in grupo)
+    assert grupo[0]["grupo"] and grupo[0]["grupo"] == grupo[1]["grupo"]
+    ids_pendientes = {m["id"] for m in r.json()["movimientos_no_contabilizados"]}
+    assert deposito.id not in ids_pendientes
+    assert r.json()["resumen"]["cruces_por_revisar"] == 0
+
+    # el movimiento ya está cruzado: no admite otra partida
+    r = api.post(f"{url}/cruces/", {"partida": suelto.id, "movimiento": deposito.id})
+    assert r.status_code == 400
+
+
+def test_confirmar_y_deshacer_actuan_sobre_todo_el_grupo(api, mayo_procesado):
+    from apps.conciliaciones.models import Cruce, TipoCruce
+
+    url = f"/api/conciliaciones/{mayo_procesado.id}"
+    a, b = _ingreso(mayo_procesado, 2, 30_000), _ingreso(mayo_procesado, 3, 20_000)
+    deposito = _abono(mayo_procesado, 50_000)
+    for p in (a, b):
+        Cruce.objects.create(
+            conciliacion=mayo_procesado, partida=p, movimiento=deposito,
+            tipo=TipoCruce.AGRUPADO, nota="Depósito agrupado", grupo="G1",
+        )  # fmt: skip
+    detalle = api.get(f"{url}/").json()
+    assert detalle["resumen"]["cruces_por_revisar"] == 2
+    assert deposito.id not in {m["id"] for m in detalle["movimientos_no_contabilizados"]}
+
+    primero = Cruce.objects.filter(grupo="G1").first()
+    r = api.post(f"{url}/cruces/{primero.id}/confirmar/")
+    assert r.status_code == 200
+    assert r.json()["resumen"]["cruces_por_revisar"] == 0
+    assert Cruce.objects.filter(grupo="G1", confirmado=True).count() == 2
+
+    r = api.delete(f"{url}/cruces/{primero.id}/")
+    assert r.status_code == 200
+    assert not Cruce.objects.filter(grupo="G1").exists()
+    pendientes = {p["comprobante"] for p in r.json()["depositos_pendientes"]}
+    assert {2, 3} <= pendientes
+    sueltos = [m["id"] for m in r.json()["movimientos_no_contabilizados"]]
+    assert sueltos.count(deposito.id) == 1
+
+
+# --- diferencia de cobro de cheque (persistencia, arrastre y deshacer)
+
+
+def test_diferencia_de_cheque_se_guarda_se_arrastra_y_se_borra_al_deshacer(apertura, usuario):
+    from datetime import date
+
+    from apps.conciliaciones import servicios
+    from apps.conciliaciones.models import Conciliacion, EstadoConciliacion, OrigenPartida
+    from motor.conciliacion import conciliar
+    from motor.dominio import (
+        Cartola,
+        EstadoApertura,
+        MovimientoBancario,
+        Origen,
+        PartidaLibro,
+        Periodo,
+        TipoPartida,
+    )
+
+    egreso = PartidaLibro(
+        TipoPartida.EGRESO, 5310, date(2026, 5, 5), 654_852, glosa="Sueldo", cheque="179840"
+    )
+    cobro = MovimientoBancario(
+        date(2026, 5, 8), "Cheque pagado", 645_852, es_cargo=True, documento="179840"
+    )
+    cartola = Cartola(
+        banco="Santander", cuenta="123", numero="1", desde=date(2026, 5, 1),
+        hasta=date(2026, 5, 31), saldo_inicial=1_000_000, saldo_final=1_000_000 - 645_852,
+        movimientos=[cobro],
+    )  # fmt: skip
+    inicio = EstadoApertura(saldo_registro=1_000_000, saldo_banco=1_000_000)
+    r = conciliar(Periodo(2026, 5), inicio, [], [egreso], cartola)
+    assert r.diferencia == 0
+
+    mayo = Conciliacion.objects.create(
+        cuenta=apertura.cuenta, anio=2026, mes=5, estado=EstadoConciliacion.PROCESADA,
+        saldo_anterior=r.saldo_anterior, total_ingresos=r.total_ingresos,
+        total_egresos=r.total_egresos, saldo_banco=r.saldo_banco,
+    )  # fmt: skip
+    servicios._persistir_resultado(mayo, r)
+
+    diferencia = mayo.partidas.get(origen=OrigenPartida.DIFERENCIA)
+    assert diferencia.monto == 9_000 and not hasattr(diferencia, "cruce")
+    assert servicios.calcular_resumen(mayo).diferencia == 0
+
+    junio = servicios.apertura_desde(mayo)
+    assert [(p.monto, p.origen) for p in junio.cheques_pendientes] == [(9_000, Origen.DIFERENCIA)]
+
+    cruce = mayo.cruces.get()
+    servicios.deshacer_cruce(cruce, usuario)
+    assert not mayo.partidas.filter(origen=OrigenPartida.DIFERENCIA).exists()
+    resumen = servicios.calcular_resumen(mayo)
+    assert resumen.total_cheques_pendientes == 654_852
+    assert resumen.diferencia == 0
+
+
+def test_informe_lista_todos_los_comprobantes_del_grupo(mayo_procesado, usuario):
+    from apps.conciliaciones import servicios
+    from apps.conciliaciones.informes.datos import armar_informe
+
+    a, b = _ingreso(mayo_procesado, 34917, 30_000), _ingreso(mayo_procesado, 34918, 20_000)
+    deposito = _abono(mayo_procesado, 50_000)
+    servicios.cruzar_manual(mayo_procesado, [b, a], deposito, usuario)
+    informe = armar_informe(mayo_procesado)
+    estados = [f.estado for f in informe.cartola if f.abono == 50_000 and f.fecha == deposito.fecha]
+    assert estados == ["Cruzado con ingresos #34917, #34918"]
+    assert len(informe.cruces) == 2

@@ -140,6 +140,8 @@ Las vistas **no** contienen reglas de negocio: todo pasa por `apps/conciliacione
 - `Conciliacion` (una por cuenta y mes; estados `importada` → `borrador` → `procesada` → `cerrada`).
   Guarda saldo anterior, totales del mes, saldo banco y advertencias.
 - `Partida` (libro) y `Movimiento` (banco) se guardan **todos**; lo que no tiene `Cruce` es pendiente.
+  Una partida tiene a lo más un cruce; un movimiento puede tener varios (cruce agrupado: comparten
+  `Cruce.grupo` y se confirman o deshacen juntos).
   `origen`: `periodo` / `arrastre` (pendiente de meses anteriores) / `repetido` (movimiento ya
   incluido en la cartola anterior, descartado).
 - La apertura de un mes = pendientes de la conciliación anterior (`servicios.apertura_desde`).
@@ -161,7 +163,7 @@ Las vistas **no** contienen reglas de negocio: todo pasa por `apps/conciliacione
 | GET/DELETE | `conciliaciones/ID/` | Detalle completo / eliminar |
 | POST | `conciliaciones/ID/archivos/` (multipart `tipo, archivo`) | `ingresos`, `egresos`, `cartola` |
 | POST | `conciliaciones/ID/procesar/` | Corre el motor y guarda resultados |
-| POST | `conciliaciones/ID/cruces/` `{partida, movimiento}` | Cruce manual |
+| POST | `conciliaciones/ID/cruces/` `{partida, movimiento}` o `{partidas: [ids], movimiento}` | Cruce manual (1:1 o agrupado) |
 | POST/DELETE | `conciliaciones/ID/cruces/CID/confirmar/` · `conciliaciones/ID/cruces/CID/` | Confirmar / deshacer |
 | POST | `conciliaciones/ID/redondeo/` `{monto}` | Ajuste por redondeo (±$100) |
 | POST | `conciliaciones/ID/cerrar/` · `conciliaciones/ID/reabrir/` `{motivo}` | Cierre |
@@ -193,6 +195,10 @@ Diferencia               = saldo final de la cartola − saldo según conciliaci
   En 2 y 3, por cada monto se maximiza el nº de pares y luego se minimiza la suma de días
   (ventana 60 días). Es `SUGERIDO` (requiere confirmación del usuario) si sobran partidas o movimientos de ese monto
   o si la diferencia supera 7 días; si no, es automático.
+  4. **Agrupado** (tras las capas 1:1): 2 a 4 partidas libres del mismo sentido (ingresos ↔ abono,
+     egresos sin nº de cheque ↔ cargo) cuya suma es exactamente un movimiento libre, todas con fecha
+     a ≤ 15 días de él. Se elige la combinación de menor suma de días; siempre `AGRUPADO` (requiere
+     confirmación). Ej.: Ñuñoa, abono 03/06 de $285.796 = ingresos #34917 + #34918 de mayo.
 - **Continuidad:** el saldo inicial de la cartola debe coincidir con el saldo final de la anterior.
 - **Cartolas traslapadas** (febrero 2026 empieza el 30/01 y repite movimientos de enero): solo si
   la cartola NO continúa desde el saldo anterior, se descartan los movimientos que ya venían en la
@@ -208,7 +214,8 @@ Diferencia               = saldo final de la cartola − saldo según conciliaci
 - **Solo se cierra** si la diferencia es 0 y no quedan cruces por revisar (sugeridos sin confirmar).
 - Para crear el mes N, el mes N−1 debe estar cerrado (o importado). Para reabrir o eliminar un
   mes, no debe existir el mes siguiente. Reabrir exige motivo (queda en la bitácora).
-- Cruce manual: egreso ↔ cargo o ingreso ↔ abono, mismo monto, ambos libres.
+- Cruce manual: egreso ↔ cargo o ingreso ↔ abono, mismo monto, ambos libres. Con varias partidas
+  (agrupado) su suma debe ser exactamente el monto del movimiento.
 - Si se sube un archivo nuevo a una conciliación procesada, sus resultados se borran (hay que
   volver a procesar).
 - La cartola debe ser del banco y nº de cuenta de la `CuentaBancaria` que se concilia.
