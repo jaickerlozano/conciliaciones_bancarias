@@ -85,12 +85,14 @@ class TipoPartida(models.TextChoices):
 class OrigenPartida(models.TextChoices):
     PERIODO = "periodo", "Del período"
     ARRASTRE = "arrastre", "Pendiente de meses anteriores"
+    DIFERENCIA = "diferencia", "Diferencia de cobro de cheque"
 
 
 class OrigenMovimiento(models.TextChoices):
     PERIODO = "periodo", "De la cartola del período"
     ARRASTRE = "arrastre", "No contabilizado de meses anteriores"
     REPETIDO = "repetido", "Repetido de la cartola anterior (descartado)"
+    DIFERENCIA = "diferencia", "Diferencia de cobro de cheque"
 
 
 class Partida(models.Model):
@@ -98,7 +100,7 @@ class Partida(models.Model):
         Conciliacion, on_delete=models.CASCADE, related_name="partidas"
     )
     tipo = models.CharField(max_length=7, choices=TipoPartida.choices)
-    origen = models.CharField(max_length=8, choices=OrigenPartida.choices)
+    origen = models.CharField(max_length=10, choices=OrigenPartida.choices)
     comprobante = models.IntegerField(null=True, blank=True)
     fecha = models.DateField(null=True, blank=True)
     monto = models.BigIntegerField()
@@ -117,7 +119,7 @@ class Movimiento(models.Model):
     conciliacion = models.ForeignKey(
         Conciliacion, on_delete=models.CASCADE, related_name="movimientos"
     )
-    origen = models.CharField(max_length=8, choices=OrigenMovimiento.choices)
+    origen = models.CharField(max_length=10, choices=OrigenMovimiento.choices)
     fecha = models.DateField()
     descripcion = models.CharField(max_length=255, blank=True)
     monto = models.BigIntegerField()  # siempre positivo

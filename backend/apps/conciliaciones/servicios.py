@@ -35,7 +35,7 @@ from apps.conciliaciones.models import (
     TipoPartida,
 )
 from motor import dominio
-from motor.conciliacion import conciliar
+from motor.conciliacion import MAX_DIFERENCIA_REDONDEO, conciliar
 from motor.parsers.cartolas import leer_cartola
 from motor.parsers.conciliacion_cliente import leer_conciliacion_cliente
 from motor.parsers.libros import LibroContable, leer_libro
@@ -45,7 +45,8 @@ from motor.texto import NOMBRE_MES, fmt_clp, normalizar
 # operativo es por mes; el del archivo completo es solo un tope de seguridad.
 MAX_PARTIDAS_PERIODO = 5_000
 MAX_PARTIDAS_PLANILLA = 200_000
-MAX_REDONDEO = 100  # pesos: el redondeo solo absorbe decimales (cuotas en UF), no diferencias
+# pesos: el redondeo solo absorbe decimales (cuotas en UF), no diferencias
+MAX_REDONDEO = MAX_DIFERENCIA_REDONDEO
 
 EXTENSIONES = {
     TipoArchivo.INGRESOS: (".xlsx", ".xlsm"),
@@ -190,6 +191,7 @@ def _a_partida_libro(p: Partida) -> dominio.PartidaLibro:
         glosa=p.glosa,
         depto=p.depto,
         cheque=p.cheque,
+        origen=_origen_dominio(p.origen),
     )
 
 
@@ -201,7 +203,16 @@ def _a_movimiento_bancario(m: Movimiento) -> dominio.MovimientoBancario:
         es_cargo=m.es_cargo,
         documento=m.documento,
         sucursal=m.sucursal,
+        origen=_origen_dominio(m.origen),
     )
+
+
+def _origen_dominio(origen: str) -> dominio.Origen:
+    """Solo la diferencia de cobro de cheque conserva su origen al pasar al mes siguiente; el
+    resto lo recalcula el motor (todo lo pendiente pasa como arrastre)."""
+    if origen == OrigenPartida.DIFERENCIA:
+        return dominio.Origen.DIFERENCIA
+    return dominio.Origen.PERIODO
 
 
 def _nueva_partida(c: Conciliacion, p: dominio.PartidaLibro, origen: str) -> Partida:
@@ -564,6 +575,7 @@ def confirmar_todos(c: Conciliacion, usuario) -> int:
     return len(pendientes)
 
 
+@transaction.atomic
 def deshacer_cruce(cruce: Cruce, usuario) -> None:
     c = cruce.conciliacion
     _exigir_editable(c)
@@ -571,8 +583,37 @@ def deshacer_cruce(cruce: Cruce, usuario) -> None:
         f"Comprobante {cruce.partida.comprobante} ↔ {cruce.movimiento.fecha:%d/%m} "
         f"{fmt_clp(cruce.movimiento.monto)}"
     )
+    _quitar_diferencia_de_cheque(cruce)
     cruce.delete()
     _evento(c, usuario, AccionEvento.CRUCE_DESHECHO, detalle)
+
+
+def _quitar_diferencia_de_cheque(cruce: Cruce) -> None:
+    """Al deshacer un cruce de cheque cobrado por otro monto, la diferencia pendiente que generó
+    el motor sobra (el egreso y el cargo vuelven completos a pendientes): se elimina."""
+    partida, movimiento = cruce.partida, cruce.movimiento
+    dif = partida.monto - movimiento.monto
+    if cruce.tipo != TipoCruce.CHEQUE or abs(dif) <= MAX_DIFERENCIA_REDONDEO:
+        return
+    if dif > 0:
+        sobrante = cruce.conciliacion.partidas.filter(
+            origen=OrigenPartida.DIFERENCIA,
+            cruce__isnull=True,
+            tipo=TipoPartida.EGRESO,
+            comprobante=partida.comprobante,
+            cheque=partida.cheque,
+            monto=dif,
+        ).first()
+    else:
+        sobrante = cruce.conciliacion.movimientos.filter(
+            origen=OrigenMovimiento.DIFERENCIA,
+            cruce__isnull=True,
+            es_cargo=True,
+            documento=movimiento.documento,
+            monto=-dif,
+        ).first()
+    if sobrante is not None:
+        sobrante.delete()
 
 
 @transaction.atomic

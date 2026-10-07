@@ -78,7 +78,7 @@ export interface ConciliacionResumida {
 export interface Partida {
   id: number
   tipo: 'INGRESO' | 'EGRESO'
-  origen: 'periodo' | 'arrastre'
+  origen: 'periodo' | 'arrastre' | 'diferencia'
   comprobante: number | null
   fecha: string | null
   monto: number
@@ -89,7 +89,7 @@ export interface Partida {
 
 export interface Movimiento {
   id: number
-  origen: 'periodo' | 'arrastre' | 'repetido'
+  origen: 'periodo' | 'arrastre' | 'repetido' | 'diferencia'
   fecha: string
   descripcion: string
   monto: number

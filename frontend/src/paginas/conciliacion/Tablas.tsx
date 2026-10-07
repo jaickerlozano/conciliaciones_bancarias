@@ -44,6 +44,7 @@ export function Celda({
 }
 
 export function OrigenPartida({ p }: { p: Partida }) {
+  if (p.origen === 'diferencia') return <Insignia tono="ambar">Diferencia de cobro</Insignia>
   return p.origen === 'arrastre' ? <Insignia tono="violeta">Mes anterior</Insignia> : null
 }
 

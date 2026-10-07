@@ -21,6 +21,9 @@ class TipoPartida(StrEnum):
 class Origen(StrEnum):
     PERIODO = "periodo"  # registrado/movido en el período que se concilia
     ARRASTRE = "arrastre"  # pendiente heredado de conciliaciones anteriores
+    # diferencia entre lo registrado y lo cobrado de un cheque cruzado por número; queda
+    # pendiente (y se arrastra) hasta que se resuelva
+    DIFERENCIA = "diferencia"
 
 
 @dataclass(frozen=True)
