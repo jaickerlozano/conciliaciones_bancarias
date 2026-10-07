@@ -38,10 +38,13 @@ from motor import dominio
 from motor.conciliacion import conciliar
 from motor.parsers.cartolas import leer_cartola
 from motor.parsers.conciliacion_cliente import leer_conciliacion_cliente
-from motor.parsers.libros import leer_libro
-from motor.texto import fmt_clp, normalizar
+from motor.parsers.libros import LibroContable, leer_libro
+from motor.texto import NOMBRE_MES, fmt_clp, normalizar
 
-MAX_PARTIDAS_PLANILLA = 10_000
+# Las planillas son acumuladas (años de historia) y solo se usa el bloque del mes: el límite
+# operativo es por mes; el del archivo completo es solo un tope de seguridad.
+MAX_PARTIDAS_PERIODO = 5_000
+MAX_PARTIDAS_PLANILLA = 200_000
 MAX_REDONDEO = 100  # pesos: el redondeo solo absorbe decimales (cuotas en UF), no diferencias
 
 EXTENSIONES = {
@@ -408,6 +411,31 @@ def guardar_archivo(c: Conciliacion, tipo: str, archivo: UploadedFile, usuario) 
     return registro
 
 
+def validar_tamano_libro(libro: LibroContable, periodo: dominio.Periodo, nombre: str) -> None:
+    """Rechaza un mes desmesurado o un archivo absurdo, sin castigar los años de historia."""
+    del_mes = len(libro.partidas(periodo))
+    if del_mes > MAX_PARTIDAS_PERIODO:
+        raise ErrorConciliacion(
+            f"El bloque de {_nombre_periodo(periodo)} de la planilla de {nombre} tiene "
+            f"{_miles(del_mes)} partidas; el máximo por mes es {_miles(MAX_PARTIDAS_PERIODO)}. "
+            '¿Falta una fila "CIERRE MES" que separe los meses?'
+        )
+    total = sum(len(ps) for ps in libro.bloques.values())
+    if total > MAX_PARTIDAS_PLANILLA:
+        raise ErrorConciliacion(
+            f"La planilla de {nombre} tiene {_miles(total)} partidas en total; el máximo es "
+            f"{_miles(MAX_PARTIDAS_PLANILLA)}. Archive los años antiguos en otro archivo."
+        )
+
+
+def _miles(n: int) -> str:
+    return f"{n:,}".replace(",", ".")
+
+
+def _nombre_periodo(periodo: dominio.Periodo) -> str:
+    return f"{NOMBRE_MES[periodo.mes]} {periodo.anio}"
+
+
 def _solo_digitos(texto: str) -> str:
     return re.sub(r"\D", "", texto).lstrip("0")
 
@@ -451,12 +479,7 @@ def procesar(c: Conciliacion, usuario) -> Conciliacion:
     ingresos = leer_libro(archivos[TipoArchivo.INGRESOS].archivo.path, dominio.TipoPartida.INGRESO)
     egresos = leer_libro(archivos[TipoArchivo.EGRESOS].archivo.path, dominio.TipoPartida.EGRESO)
     for libro, nombre in ((ingresos, "ingresos"), (egresos, "egresos")):
-        cantidad = sum(len(ps) for ps in libro.bloques.values())
-        if cantidad > MAX_PARTIDAS_PLANILLA:
-            raise ErrorConciliacion(
-                f"La planilla de {nombre} tiene {cantidad:,} partidas; el máximo es "
-                f"{MAX_PARTIDAS_PLANILLA:,}."
-            )
+        validar_tamano_libro(libro, c.periodo, nombre)
     cartola = leer_cartola(archivos[TipoArchivo.CARTOLA].archivo.path)
     _validar_cartola_de_la_cuenta(c.cuenta, cartola)
 

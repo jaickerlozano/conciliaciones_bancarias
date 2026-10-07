@@ -207,3 +207,35 @@ def test_limite_de_tamano_por_tipo(settings):
     servicios.validar_archivo(grande, "apertura")  # bajo el límite de apertura: OK
     with pytest.raises(ErrorConciliacion, match="supera el máximo"):
         servicios.validar_archivo(grande, "ingresos")
+
+
+def test_limite_de_partidas_es_por_mes_no_por_historia(monkeypatch):
+    """La planilla es acumulada (años de historia): solo se limita el bloque del mes que se
+    concilia, más un tope de seguridad para el archivo completo."""
+    from datetime import date
+
+    from apps.conciliaciones import servicios
+    from apps.conciliaciones.servicios import ErrorConciliacion
+    from motor.dominio import PartidaLibro, Periodo, TipoPartida
+    from motor.parsers.libros import LibroContable
+
+    monkeypatch.setattr(servicios, "MAX_PARTIDAS_PERIODO", 3)
+    monkeypatch.setattr(servicios, "MAX_PARTIDAS_PLANILLA", 20)
+
+    def partidas(n):
+        return [PartidaLibro(TipoPartida.INGRESO, i, date(2026, 5, 1), 1_000) for i in range(n)]
+
+    libro = LibroContable(tipo=TipoPartida.INGRESO)
+    for mes in range(1, 6):  # historia: 5 meses x 3 = 15 partidas (> límite por mes)
+        libro.bloques[Periodo(2026, mes)] = partidas(3)
+    servicios.validar_tamano_libro(libro, Periodo(2026, 5), "ingresos")  # no debe fallar
+
+    libro.bloques[Periodo(2026, 6)] = partidas(4)
+    with pytest.raises(
+        ErrorConciliacion, match="Junio 2026 de la planilla de ingresos tiene 4 partidas"
+    ):
+        servicios.validar_tamano_libro(libro, Periodo(2026, 6), "ingresos")
+
+    libro.bloques[Periodo(2026, 7)] = partidas(3)  # total 22 > tope del archivo
+    with pytest.raises(ErrorConciliacion, match="22 partidas en total"):
+        servicios.validar_tamano_libro(libro, Periodo(2026, 7), "ingresos")
