@@ -30,6 +30,7 @@ ALIAS_COLUMNAS = {
     "fecha": ("FECHA",),
     "concepto": ("CONCEPTO",),
     "comprobante": ("COMPROBANTE", "COMPROB", "COMPROB."),
+    "torre": ("TORRE",),
     "depto": ("DEPTO", "DEPARTAMENTO"),
     "detalle": ("DETALLE", "DETALE"),
     "cheque": ("NUMERO DE CHEQUE", "N CHEQUE", "NO CHEQUE", "CHEQUE"),
@@ -226,9 +227,10 @@ def _leer_partida(
     cheque = celda("cheque")
     if isinstance(cheque, float) and cheque.is_integer():
         cheque = int(cheque)
-    depto = celda("depto")
-    if isinstance(depto, float) and depto.is_integer():
-        depto = int(depto)
+    depto = _texto_entero(celda("depto"))
+    torre = _texto_entero(celda("torre"))
+    if torre and depto:
+        depto = f"{torre}-{depto}"  # en edificios con torres el mismo depto existe en ambas
 
     return PartidaLibro(
         tipo=tipo,
@@ -236,9 +238,16 @@ def _leer_partida(
         fecha=fecha,
         monto=monto,
         glosa=str(celda("detalle") or "").strip(),
-        depto=str(depto or "").strip(),
+        depto=depto,
         cheque=str(cheque or "").strip(),
     )
+
+
+def _texto_entero(valor) -> str:
+    """Texto de una celda; los números enteros leídos como float (61.0) pierden el decimal."""
+    if isinstance(valor, float) and valor.is_integer():
+        valor = int(valor)
+    return str(valor or "").strip()
 
 
 def _validar_total_cierre(
