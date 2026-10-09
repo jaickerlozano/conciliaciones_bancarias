@@ -34,7 +34,7 @@ ingresos/egresos se registrarán directamente en el sistema.
 | 2b | Simulación ene→may 2026 vs. conciliaciones del cliente: los 5 meses iguales, dif. $0 | ✅ Hecho |
 | 3 | Frontend React: carga mensual, mesa de trabajo de cruces, vista de conciliación | ✅ Hecho |
 | 4 | Salidas: PDF (ReportLab) y Excel (openpyxl, con fórmulas) | ✅ Hecho |
-| 5 | Más bancos y comunidades (pruebas antes de producción) | 🔄 BCI + Edificio Bustos 2166 hechos (jun–jul iguales al cliente) |
+| 5 | Más bancos y comunidades (pruebas antes de producción) | 🔄 BCI + Edificio Bustos 2166 hechos (jun–jul iguales al cliente); cartolas Scotiabank y Banco de Chile leídas; planillas de Lago Ranco y General Córdova |
 
 ## 3. Stack
 
@@ -248,8 +248,10 @@ Diferencia               = saldo final de la cartola − saldo según conciliaci
 
 ## 7. Datos del cliente (confidencial)
 
-- Los archivos reales viven **fuera del repo**, en `../ingresos_egresos_cartolas/` (o
-  `$CONCILIACION_DATOS_DIR`). Contienen nombres, RUTs y montos reales: **nunca** copiarlos al
+- Los archivos reales viven **fuera del repo**, en carpetas hermanas por comunidad: `../cinema/`
+  (o `$CONCILIACION_DATOS_DIR`), `../bustos/`, `../nunoa_centro/`, `../lago_ranco/`,
+  `../general_cordova/`, `../monsenor_eyzaguirre/` y `../espacio_lyon/` (variables `CONCILIACION_<COMUNIDAD>_DIR`,
+  ver `backend/tests/conftest.py`). Contienen nombres, RUTs y montos reales: **nunca** copiarlos al
   repo, a fixtures versionadas, a issues ni a servicios externos. `.gitignore` bloquea `*.xlsx`,
   `*.xlsm`, `*.pdf`.
 - Fixtures sintéticas para tests: construirlas en código (ver `tests/test_motor/test_cruce.py`).
@@ -261,11 +263,14 @@ Diferencia               = saldo final de la cartola − saldo según conciliaci
 | Santander feb–may 2026 | Cartola oficial PDF (texto) | ✅ `SantanderPDFOficial` |
 | Santander ene 2026 | "Consulta de movimientos" impresa como trazos vectoriales (sin texto) | ❌ → plantilla estándar |
 | BCI jun–ago 2026 | Cartola oficial PDF, con SALDO DIARIO en cada fila | ✅ `BciPDFOficial` |
+| Scotiabank sep 2026 (General Córdova) | "ESTADO DE CUENTA" PDF, montos con "$" y signo, saldo por fila | ✅ `ScotiabankPDF` |
+| Scotiabank sep 2026 (Espacio Lyon) | "ESTADO DE CUENTA CORRIENTE" oficial PDF, fecha "07 / SEP", SALDO DIARIO | ✅ `ScotiabankPDFCuentaCorriente` |
+| Banco de Chile oct 2023 (Monseñor Eyzaguirre) | Cartola oficial PDF, fecha DIA/MES, saldo al cierre de cada día | ✅ `BancoChilePDF` |
 | cualquiera | **Plantilla estándar Excel** (`CARTOLA ESTÁNDAR`) | ✅ `PlantillaEstandar` |
 
 Marzo y abril de Cinema se reemplazaron por las cartolas oficiales (Nº 304/305); calzan con las
 transcripciones a plantilla que se habían hecho a mano (test de comparación). Enero sigue en
-plantilla estándar: `../ingresos_egresos_cartolas/cartolas_estandar/`.
+plantilla estándar: `../cinema/cartolas_estandar/`.
 
 **BCI:** el sentido de cada monto (cargo/abono) se verifica con el saldo diario de la fila; si no
 calza, `ErrorCartola` con página y línea. La palabra "BCI" solo aparece en el pie legal de la
@@ -275,6 +280,21 @@ bancos/formatos no soportados, la **plantilla estándar** es el respaldo (el usu
 movimientos); `escribir_plantilla()` genera la plantilla vacía para descargar.
 En las transferencias, la descripción trae el RUT del pagador (ej. `0106472769`): servirá para
 asociar RUT ↔ depto y automatizar el cruce de ingresos.
+
+**Scotiabank:** el logo es imagen (el nombre del banco no está en el texto); se reconoce por
+"ESTADO DE CUENTA N°", "Número Cuenta" y el resumen (Saldo Anterior, Depositos / Abonos,
+Cargos / Giros, Saldo Actual). N° Doc. "0" = sin documento. El sentido se verifica con el saldo
+de cada fila.
+El "ESTADO DE CUENTA CORRIENTE" (`scotiabank_cc_pdf.py`) es otro formato: cuenta con guiones
+("0-0099-28968-17"; en la `CuentaBancaria` sirve igual "0099-28968-17" o "992896817", porque se
+comparan los dígitos sin ceros a la izquierda), período "01/SEP/2026", resumen SALDO ANTERIOR /
+DEPOSITOS/ABONOS / CARGOS/GIROS / SALDO ACTUAL y "@SCOTIABANK.CL" en el correo del ejecutivo.
+DOCTO "00000000" = sin documento. El sentido se verifica con el SALDO DIARIO (si una fila no lo
+trae, se acumula hasta la siguiente). El "Resumen de Comisiones" final repite cargos: se ignora.
+**Banco de Chile:** el año de cada fecha DIA/MES se deduce del período DESDE/HASTA (cruza dic →
+ene). Filas SALDO INICIAL y SALDO FINAL; el saldo de cierre de cada día se compara con la suma
+acumulada y los totales de la última página (depósitos, cheques, otros abonos/cargos, giros,
+impuestos) con lo leído. Los nº de cheque traen ceros a la izquierda; el cruce los normaliza.
 
 ## 8. Comandos
 
@@ -286,14 +306,14 @@ uv run pytest tests/test_motor            # solo el motor (sin BD)
 uv run pytest -m "not datos_reales"       # sin archivos del cliente
 uv run ruff check . && uv run ruff format --check .
 uv run python -m motor.cli --periodo 2026-05 \
-  --ingresos "../../ingresos_egresos_cartolas/listado ingresos CINEMA2.xlsx" \
-  --egresos "../../ingresos_egresos_cartolas/emitir egresos CINEMA.xlsm" \
-  --cartola ../../ingresos_egresos_cartolas/cartola_mayo_2026.pdf \
-  --apertura "../../ingresos_egresos_cartolas/CONCILIACIÓN  MENSUAL CINEMA.xlsm" \
+  --ingresos "../../cinema/listado ingresos CINEMA2.xlsx" \
+  --egresos "../../cinema/emitir egresos CINEMA.xlsm" \
+  --cartola ../../cinema/cartola_mayo_2026.pdf \
+  --apertura "../../cinema/CONCILIACIÓN  MENSUAL CINEMA.xlsm" \
   --hoja-apertura "ABRIL´26"
 
 # Simulación enero→mayo 2026 contra las conciliaciones del cliente (desde backend/)
-uv run python -m motor.simular --datos ../../ingresos_egresos_cartolas \
+uv run python -m motor.simular --datos ../../cinema \
   --planilla "CONCILIACIÓN  MENSUAL CINEMA.xlsm" --ingresos "listado ingresos CINEMA2.xlsx" \
   --egresos "emitir egresos CINEMA.xlsm" --desde 2026-01 --hasta 2026-05 \
   --cartola 2026-01=cartolas_estandar/cartola_enero_2026.xlsx --cartola 2026-02=cartola_febrero_2026.pdf \
@@ -355,3 +375,10 @@ En Windows la consola necesita `PYTHONIOENCODING=utf-8` para imprimir tildes des
 - Errores detectados en planillas del cliente para informarle: cierre 2021-02 y 2024-04 de
   ingresos y 2025-02 de egresos no cuadran con la suma de sus partidas; comprobante 1261 con
   fecha 18/08/2226; comprobantes 23–26 de ingresos y 1217 de egresos duplicados.
+- Errores en planillas de Lago Ranco para informar al cliente: el rótulo "CIERRE DE FBRERO'23"
+  de egresos está mal escrito (las partidas de feb-2023 quedan sin período; no se agregó
+  "FBRERO" como alias para no esconder el error); en ingresos, la fila de cierre de marzo 2026
+  dice "CIERRE MES FEBRERO 2026" (marzo queda sumado a febrero); los cierres de ingresos
+  2023-08 y 2024-07 no cuadran con sus partidas; comprobantes duplicados: ingresos 3618, 3625,
+  3643, 3657, 3925, 3968 y 4403, egresos 2462, 3222 y 99999; fechas sospechosas: ingresos 3670
+  (año 2002), 3927 y 3979 (año 2021) y 4240 sin fecha; egreso 2408 sin monto.

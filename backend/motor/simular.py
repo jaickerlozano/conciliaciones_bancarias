@@ -4,7 +4,7 @@ Parte de la conciliación del cliente del mes anterior al primero y luego encade
 usando SOLO el resultado del programa (no las hojas del cliente), como ocurrirá en producción.
 Lo único que se toma de la hoja de cada mes es el "Redondeo", porque es un ajuste manual.
 
-    uv run python -m motor.simular --datos ../../ingresos_egresos_cartolas \
+    uv run python -m motor.simular --datos ../../cinema \
         --planilla "CONCILIACIÓN  MENSUAL CINEMA.xlsm" \
         --ingresos "listado ingresos CINEMA2.xlsx" --egresos "emitir egresos CINEMA.xlsm" \
         --desde 2026-01 --hasta 2026-05 \

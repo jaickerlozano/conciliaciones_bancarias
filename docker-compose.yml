@@ -37,7 +37,7 @@ services:
     volumes:
       - ./backend:/app
       - media:/app/media
-      - ../ingresos_egresos_cartolas:/datos:ro
+      - ../cinema:/datos:ro
     depends_on:
       db:
         condition: service_healthy

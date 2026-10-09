@@ -118,5 +118,5 @@ REST_FRAMEWORK = {
 
 # Dónde buscar los archivos reales del cliente (comando cargar_piloto y tests)
 CONCILIACION_DATOS_DIR = Path(
-    env("CONCILIACION_DATOS_DIR", default=str(RAIZ_REPO.parent / "ingresos_egresos_cartolas"))
+    env("CONCILIACION_DATOS_DIR", default=str(RAIZ_REPO.parent / "cinema"))
 )
