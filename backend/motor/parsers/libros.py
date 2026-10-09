@@ -113,13 +113,14 @@ def leer_libro(ruta: str | Path, tipo: TipoPartida, hoja: str | None = None) -> 
             raise ErrorFormatoPlanilla(
                 f"No existe la hoja '{hoja}' en {Path(ruta).name}. Hojas: {wb.sheetnames}"
             )
-        filas = wb[hoja].iter_rows(max_col=MAX_COLUMNAS, values_only=True)
+        # Se cargan todas las filas: la columna del monto se decide mirando la planilla entera.
+        filas = list(wb[hoja].iter_rows(max_col=MAX_COLUMNAS, values_only=True))
         return _procesar_filas(filas, tipo, Path(ruta).name)
     finally:
         wb.close()
 
 
-def _procesar_filas(filas, tipo: TipoPartida, nombre_archivo: str) -> LibroContable:
+def _procesar_filas(filas: list[tuple], tipo: TipoPartida, nombre_archivo: str) -> LibroContable:
     libro = LibroContable(tipo=tipo)
     columnas: dict[str, int] | None = None
     campo_monto = "debe" if tipo == TipoPartida.INGRESO else "haber"
@@ -144,6 +145,7 @@ def _procesar_filas(filas, tipo: TipoPartida, nombre_archivo: str) -> LibroConta
             claves = candidatas.keys()
             if {"fecha", "concepto", "comprobante"} <= claves and ({"debe", "haber"} & claves):
                 columnas = candidatas
+                campo_monto = _columna_monto(filas[nro_fila:], columnas, tipo)
             continue
 
         etiqueta = _fila_cierre(fila, columnas)
@@ -220,14 +222,19 @@ def _leer_partida(
     except (TypeError, ValueError):
         comprobante = None
 
-    # Ingresos en DEBE y egresos en HABER; algunas planillas (ej. ingresos de General Córdova)
-    # usan la otra columna, así que si la esperada viene vacía se toma la otra.
+    # La columna del monto es la misma para toda la planilla (ver `_columna_monto`). Un monto
+    # solo en la columna contraria suele ser un reverso o anulación: no se suma como partida.
     otro_campo = "haber" if campo_monto == "debe" else "debe"
     bruto, otro = celda(campo_monto), celda(otro_campo)
-    otro_con_monto = isinstance(otro, int | float) and otro != 0
+    otro_con_monto = _es_monto(otro)
     if bruto in (None, "", 0) and otro_con_monto:
-        bruto = otro
-    elif otro_con_monto and isinstance(bruto, int | float):
+        libro.advertencias.append(
+            f"Fila {nro_fila}: comprobante {comprobante} trae el monto en {otro_campo.upper()} "
+            f"({fmt_clp(a_pesos(otro)[0])}) y esta planilla usa {campo_monto.upper()}; se omite. "
+            "Revise si es un reverso o un error de digitación."
+        )
+        return None
+    if otro_con_monto and isinstance(bruto, int | float):
         libro.advertencias.append(
             f"Fila {nro_fila}: comprobante {comprobante} tiene monto en DEBE y en HABER; "
             f"se usa {campo_monto.upper()} ({fmt_clp(a_pesos(bruto)[0])}). Revise la planilla."
@@ -273,6 +280,31 @@ def _leer_partida(
         depto=depto,
         cheque=str(cheque or "").strip(),
     )
+
+
+def _es_monto(valor) -> bool:
+    return isinstance(valor, int | float) and not isinstance(valor, bool) and valor != 0
+
+
+def _columna_monto(filas: list[tuple], columnas: dict[str, int], tipo: TipoPartida) -> str:
+    """Columna del monto para toda la planilla: la que tiene más partidas de ese tipo con monto.
+
+    Lo normal es ingresos en DEBE y egresos en HABER, pero hay planillas al revés (ej. ingresos
+    de General Córdova, en HABER). En empate gana la columna habitual.
+    """
+    esperada = "debe" if tipo == TipoPartida.INGRESO else "haber"
+    otra = "haber" if esperada == "debe" else "debe"
+    conceptos = (tipo.value, tipo.value + "S")
+    i_concepto = columnas["concepto"]
+    cuenta = {esperada: 0, otra: 0}
+    for fila in filas:
+        if i_concepto >= len(fila) or normalizar(fila[i_concepto]) not in conceptos:
+            continue
+        for campo in cuenta:
+            idx = columnas.get(campo)
+            if idx is not None and idx < len(fila) and _es_monto(fila[idx]):
+                cuenta[campo] += 1
+    return otra if cuenta[otra] > cuenta[esperada] else esperada
 
 
 def _texto_entero(valor) -> str:
