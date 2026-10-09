@@ -9,6 +9,13 @@
 Los pendientes del mes anterior (EstadoApertura) vuelven a cruzarse contra la cartola nueva:
 un cheque girado en abril y cobrado en mayo sale solo de la lista.
 
+Si un cheque se cruza por número pero el banco lo cobró por otro monto, la diferencia queda
+pendiente (origen `diferencia`): si cobró menos, como cheque girado no cobrado por la
+diferencia; si cobró más, como cargo no contabilizado. Así la conciliación cuadra y la
+diferencia sigue a la vista, mes a mes, hasta que se aclare. Las diferencias de hasta $100
+(decimales de cuotas en UF) no se separan: se absorben con el ajuste por redondeo, como hace
+el cliente.
+
 Si la cartola se traslapa con la anterior (ej. la de febrero empieza el 30/01 y repite
 movimientos ya conciliados en enero), los movimientos repetidos se descartan.
 """
@@ -20,16 +27,22 @@ from dataclasses import replace
 from motor.cruce import ConfigCruce, cruzar
 from motor.dominio import (
     Cartola,
+    Cruce,
     EstadoApertura,
     MovimientoBancario,
     Origen,
     PartidaLibro,
     Periodo,
     ResultadoConciliacion,
+    TipoCruce,
+    TipoPartida,
 )
 from motor.texto import fmt_clp
 
 DIAS_TOLERANCIA_REPETIDO = 5
+# Hasta este monto una diferencia de cobro de cheque es de redondeo (decimales de UF) y se
+# absorbe con el ajuste por redondeo; sobre él queda como pendiente.
+MAX_DIFERENCIA_REDONDEO = 100
 
 
 def conciliar(
@@ -52,13 +65,15 @@ def conciliar(
         )
     advertencias = _validar_entradas(periodo, apertura, cartola, descartados)
 
-    egresos_candidatos = _con_origen(apertura.cheques_pendientes, Origen.ARRASTRE) + egresos
-    ingresos_candidatos = _con_origen(apertura.depositos_pendientes, Origen.ARRASTRE) + ingresos
+    egresos_candidatos = _con_origen(apertura.cheques_pendientes) + egresos
+    ingresos_candidatos = _con_origen(apertura.depositos_pendientes) + ingresos
     movimientos: list[MovimientoBancario] = [
-        replace(m, origen=Origen.ARRASTRE) for m in apertura.movimientos_no_contabilizados
+        replace(m, origen=_origen_arrastrado(m.origen))
+        for m in apertura.movimientos_no_contabilizados
     ] + nuevos
 
     resultado_cruce = cruzar(egresos_candidatos, ingresos_candidatos, movimientos, config)
+    cheques_dif, cargos_dif = diferencias_de_cheques(resultado_cruce.cruces)
 
     return ResultadoConciliacion(
         periodo=periodo,
@@ -66,9 +81,9 @@ def conciliar(
         total_ingresos=sum(p.monto for p in ingresos),
         total_egresos=sum(p.monto for p in egresos),
         redondeo=redondeo,
-        cheques_pendientes=resultado_cruce.egresos_sin_cruce,
+        cheques_pendientes=resultado_cruce.egresos_sin_cruce + cheques_dif,
         depositos_pendientes=resultado_cruce.ingresos_sin_cruce,
-        movimientos_no_contabilizados=resultado_cruce.movimientos_sin_cruce,
+        movimientos_no_contabilizados=resultado_cruce.movimientos_sin_cruce + cargos_dif,
         saldo_banco=cartola.saldo_final,
         cruces=resultado_cruce.cruces,
         advertencias=advertencias + cartola.advertencias,
@@ -110,8 +125,63 @@ def _mismo_movimiento(a: MovimientoBancario, b: MovimientoBancario) -> bool:
     return not (doc_a and doc_b) or doc_a == doc_b
 
 
-def _con_origen(partidas: list[PartidaLibro], origen: Origen) -> list[PartidaLibro]:
-    return [replace(p, origen=origen) for p in partidas]
+def diferencias_de_cheques(
+    cruces: list[Cruce],
+) -> tuple[list[PartidaLibro], list[MovimientoBancario]]:
+    """Pendientes que explican los cheques cobrados por un monto distinto al registrado.
+
+    Devuelve (egresos pendientes, cargos no contabilizados), ambos con origen `diferencia`.
+    """
+    egresos: list[PartidaLibro] = []
+    cargos: list[MovimientoBancario] = []
+    for cruce in cruces:
+        partida, mov = cruce.partida, cruce.movimiento
+        dif = partida.monto - mov.monto
+        if cruce.tipo != TipoCruce.CHEQUE or abs(dif) <= MAX_DIFERENCIA_REDONDEO:
+            continue
+        numero = partida.cheque or mov.documento
+        if dif > 0:  # el banco cobró menos: falta que cobre la diferencia
+            egresos.append(
+                PartidaLibro(
+                    tipo=TipoPartida.EGRESO,
+                    comprobante=partida.comprobante,
+                    fecha=mov.fecha,
+                    monto=dif,
+                    glosa=(
+                        f"Diferencia en el cobro del cheque {numero}: libro "
+                        f"{fmt_clp(partida.monto)}, banco {fmt_clp(mov.monto)}"
+                    ),
+                    depto=partida.depto,
+                    cheque=partida.cheque,
+                    origen=Origen.DIFERENCIA,
+                )
+            )
+        else:  # el banco cobró más de lo registrado
+            cargos.append(
+                MovimientoBancario(
+                    fecha=mov.fecha,
+                    descripcion=(
+                        f"Diferencia en el cobro del cheque {numero}: banco cobró "
+                        f"{fmt_clp(-dif)} más que lo registrado"
+                    ),
+                    monto=-dif,
+                    es_cargo=True,
+                    documento=mov.documento,
+                    sucursal=mov.sucursal,
+                    origen=Origen.DIFERENCIA,
+                )
+            )
+    return egresos, cargos
+
+
+def _origen_arrastrado(origen: Origen) -> Origen:
+    """Lo pendiente pasa como arrastre, salvo las diferencias de cheque, que conservan su origen
+    para que el usuario las siga reconociendo."""
+    return origen if origen == Origen.DIFERENCIA else Origen.ARRASTRE
+
+
+def _con_origen(partidas: list[PartidaLibro]) -> list[PartidaLibro]:
+    return [replace(p, origen=_origen_arrastrado(p.origen)) for p in partidas]
 
 
 def _validar_entradas(

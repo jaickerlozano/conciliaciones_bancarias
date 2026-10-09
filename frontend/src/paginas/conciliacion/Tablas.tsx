@@ -44,6 +44,7 @@ export function Celda({
 }
 
 export function OrigenPartida({ p }: { p: Partida }) {
+  if (p.origen === 'diferencia') return <Insignia tono="ambar">Diferencia de cobro</Insignia>
   return p.origen === 'arrastre' ? <Insignia tono="violeta">Mes anterior</Insignia> : null
 }
 
@@ -84,6 +85,7 @@ const TIPOS_CRUCE: Record<TipoCruce, { texto: string; tono: Tono }> = {
   monto_fecha: { texto: 'Monto y fecha', tono: 'cielo' },
   sugerido: { texto: 'Sugerido', tono: 'ambar' },
   manual: { texto: 'Manual', tono: 'violeta' },
+  agrupado: { texto: 'Agrupado', tono: 'cielo' },
 }
 
 export function InsigniaTipoCruce({ tipo }: { tipo: TipoCruce }) {

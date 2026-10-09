@@ -2,7 +2,7 @@
 
 export type EstadoConciliacion = 'importada' | 'borrador' | 'procesada' | 'cerrada'
 export type TipoArchivo = 'ingresos' | 'egresos' | 'cartola' | 'apertura'
-export type TipoCruce = 'cheque' | 'monto_fecha' | 'sugerido' | 'manual'
+export type TipoCruce = 'cheque' | 'monto_fecha' | 'sugerido' | 'manual' | 'agrupado'
 
 export interface Usuario {
   id: number
@@ -78,7 +78,7 @@ export interface ConciliacionResumida {
 export interface Partida {
   id: number
   tipo: 'INGRESO' | 'EGRESO'
-  origen: 'periodo' | 'arrastre'
+  origen: 'periodo' | 'arrastre' | 'diferencia'
   comprobante: number | null
   fecha: string | null
   monto: number
@@ -89,7 +89,7 @@ export interface Partida {
 
 export interface Movimiento {
   id: number
-  origen: 'periodo' | 'arrastre' | 'repetido'
+  origen: 'periodo' | 'arrastre' | 'repetido' | 'diferencia'
   fecha: string
   descripcion: string
   monto: number
@@ -106,6 +106,8 @@ export interface Cruce {
   confirmado_por: string | null
   confirmado_en: string | null
   requiere_revision: boolean
+  /** "" si es 1:1; "G1", "G2"… (motor) o "M<id>" (manual) si varias partidas suman un movimiento. */
+  grupo: string
   partida: Partida
   movimiento: Movimiento
 }

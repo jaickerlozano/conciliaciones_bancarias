@@ -160,3 +160,44 @@ def test_simulacion_enero_a_mayo_igual_al_cliente(datos):
         assert c.coincide, (c.periodo, c.diferencias)
         assert c.resultado.cuadra, (c.periodo, c.resultado.diferencia)
     assert len(resultados[1].resultado.movimientos_descartados) == 2  # traslape de febrero
+
+
+@pytest.fixture(scope="module")
+def nunoa_junio(datos_nunoa):
+    """Junio 2026 de Ñuñoa Centro desde la hoja de mayo del cliente, sin su "redondeo"."""
+    from motor.simular import hoja_del_periodo
+
+    planilla = datos_nunoa / "CONCILIACIÓN  MENSUAL ÑUÑOA CENTRO.xlsm"
+    hoja_mayo = hoja_del_periodo(planilla, Periodo(2026, 5))
+    assert hoja_mayo is not None
+    apertura = leer_conciliacion_cliente(planilla, hoja_mayo).como_apertura()
+    junio = Periodo(2026, 6)
+    ingresos = leer_libro(datos_nunoa / "listado_ingresos_nunoa_centro.xlsx", TipoPartida.INGRESO)
+    egresos = leer_libro(datos_nunoa / "emitir egresos Ñuñoa Centro.xlsm", TipoPartida.EGRESO)
+    cartola = leer_cartola(datos_nunoa / "cartola_junio_2026.pdf")
+    return conciliar(junio, apertura, ingresos.partidas(junio), egresos.partidas(junio), cartola)
+
+
+def test_nunoa_junio_2026_cheque_cobrado_por_menos_cuadra_sin_redondeo(nunoa_junio):
+    """Ñuñoa Centro (BCI): un cheque de junio se cobró $9.000 menos de lo registrado. El
+    cliente lo tapó con un "redondeo"; el programa lo deja como cheque pendiente y cuadra."""
+    from motor.dominio import Origen
+
+    r = nunoa_junio
+    assert r.redondeo == 0
+    assert r.diferencia == 0
+    diferencias = [p for p in r.cheques_pendientes if p.origen == Origen.DIFERENCIA]
+    assert [p.monto for p in diferencias] == [9_000]
+
+
+def test_nunoa_junio_2026_deposito_agrupado_de_dos_ingresos_de_mayo(nunoa_junio):
+    """El abono de $285.796 del 03/06 es la suma de dos ingresos de mayo (arrastrados como
+    depósitos pendientes): se cruza como grupo sugerido y la conciliación sigue cuadrando."""
+    from motor.dominio import TipoCruce
+
+    r = nunoa_junio
+    agrupados = [c for c in r.cruces if c.movimiento.monto == 285_796 and not c.movimiento.es_cargo]
+    assert sorted(c.partida.comprobante for c in agrupados) == [34917, 34918]
+    assert all(c.tipo == TipoCruce.AGRUPADO and c.requiere_revision for c in agrupados)
+    assert len({c.grupo for c in agrupados}) == 1
+    assert r.diferencia == 0

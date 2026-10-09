@@ -5,6 +5,7 @@ from motor.dominio import (
     Cartola,
     EstadoApertura,
     MovimientoBancario,
+    Origen,
     PartidaLibro,
     Periodo,
     TipoPartida,
@@ -126,3 +127,88 @@ def test_no_busca_repetidos_si_la_cartola_continua():
     r = conciliar(Periodo(2026, 3), apertura, [], [], cartola)
     assert r.movimientos_descartados == []
     assert r.movimientos_no_contabilizados == [pago]
+
+
+def _cheque_cobrado_por(monto_banco):
+    """Cheque 179840 registrado por $654.852 y cobrado por `monto_banco`."""
+    apertura = EstadoApertura(saldo_registro=1_000_000, saldo_banco=1_000_000)
+    egreso = PartidaLibro(
+        TipoPartida.EGRESO, 5310, date(2026, 6, 2), 654_852, glosa="Sueldo", cheque="179840"
+    )
+    cobro = MovimientoBancario(date(2026, 6, 5), "Cheque", monto_banco, True, documento="179840")
+    cartola = _cartola(1_000_000, [cobro], hasta=date(2026, 6, 30))
+    r = conciliar(Periodo(2026, 6), apertura, [], [egreso], cartola)
+    return r, cobro
+
+
+def test_cheque_cobrado_por_menos_deja_la_diferencia_como_cheque_pendiente():
+    r, cobro = _cheque_cobrado_por(645_852)
+
+    assert r.saldo_registro == 1_000_000 - 654_852  # el libro registra el egreso completo
+    assert len(r.cheques_pendientes) == 1
+    dif = r.cheques_pendientes[0]
+    assert (dif.tipo, dif.monto, dif.comprobante, dif.cheque) == (
+        TipoPartida.EGRESO,
+        9_000,
+        5310,
+        "179840",
+    )
+    assert dif.origen == Origen.DIFERENCIA
+    assert dif.fecha == cobro.fecha
+    assert "179840" in dif.glosa and "$654.852" in dif.glosa and "$645.852" in dif.glosa
+    assert r.movimientos_no_contabilizados == []
+    assert r.cuadra, r.diferencia
+    # el cruce sigue marcado para revisión
+    assert len(r.cruces) == 1 and r.cruces[0].requiere_revision
+
+
+def test_cheque_cobrado_por_mas_deja_la_diferencia_como_cargo_no_contabilizado():
+    r, cobro = _cheque_cobrado_por(660_852)
+
+    assert r.cheques_pendientes == []
+    assert len(r.movimientos_no_contabilizados) == 1
+    dif = r.movimientos_no_contabilizados[0]
+    assert (dif.monto, dif.es_cargo, dif.documento) == (6_000, True, "179840")
+    assert dif.origen == Origen.DIFERENCIA
+    assert dif.fecha == cobro.fecha
+    assert "179840" in dif.descripcion and "$6.000" in dif.descripcion
+    assert r.movimientos_cartola == [cobro]  # la diferencia no es un movimiento de la cartola
+    assert r.cuadra, r.diferencia
+
+
+def test_cheque_con_monto_igual_no_genera_diferencia():
+    r, _ = _cheque_cobrado_por(654_852)
+    assert r.cheques_pendientes == [] and r.movimientos_no_contabilizados == []
+    assert r.cuadra
+
+
+def test_diferencia_de_redondeo_en_cheque_no_se_separa():
+    """Hasta $100 es decimal de UF: se absorbe con el ajuste por redondeo (Cinema, enero 2026)."""
+    r, _ = _cheque_cobrado_por(654_852 - 100)
+    assert r.cheques_pendientes == [] and r.movimientos_no_contabilizados == []
+    assert r.diferencia == 100  # el usuario la ajusta con el redondeo
+    assert r.cruces[0].requiere_revision
+
+
+def test_diferencia_de_cheque_se_arrastra_al_mes_siguiente():
+    r, _ = _cheque_cobrado_por(645_852)
+    apertura = r.estado_cierre()
+    assert [p.monto for p in apertura.cheques_pendientes] == [9_000]
+
+    julio = _cartola(r.saldo_banco, [], hasta=date(2026, 7, 31))
+    r2 = conciliar(Periodo(2026, 7), apertura, [], [], julio)
+
+    assert [(p.monto, p.origen) for p in r2.cheques_pendientes] == [(9_000, Origen.DIFERENCIA)]
+    assert r2.cuadra, r2.diferencia
+
+
+def test_diferencia_de_cargo_se_arrastra_y_no_se_descarta_como_repetida():
+    r, _ = _cheque_cobrado_por(660_852)
+    apertura = r.estado_cierre()
+    # cartola de julio que no continúa: activa la búsqueda de repetidos
+    julio = _cartola(r.saldo_banco + 1, [], hasta=date(2026, 7, 31))
+    r2 = conciliar(Periodo(2026, 7), apertura, [], [], julio)
+
+    assert [(m.monto, m.origen) for m in r2.movimientos_no_contabilizados] == [
+        (6_000, Origen.DIFERENCIA)
+    ]

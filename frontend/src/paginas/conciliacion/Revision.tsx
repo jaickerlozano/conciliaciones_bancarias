@@ -22,23 +22,38 @@ import {
 
 type Id = 'revisar' | 'cheques' | 'depositos' | 'nocontab' | 'cruces' | 'avisos' | 'historial'
 
+/** Junta los cruces de un mismo grupo (varias partidas → un movimiento), en el orden en que
+ * aparece el primero de cada grupo. Un cruce sin grupo forma su propio grupo. */
+function agruparCruces(cruces: Cruce[]): Cruce[][] {
+  const grupos = new Map<string, Cruce[]>()
+  for (const x of cruces) {
+    const clave = x.grupo ? `g:${x.grupo}` : `c:${x.id}`
+    const grupo = grupos.get(clave)
+    if (grupo) grupo.push(x)
+    else grupos.set(clave, [x])
+  }
+  return [...grupos.values()]
+}
+
 export function Revision({ c }: { c: Conciliacion }) {
-  const porRevisar = c.cruces.filter((x) => x.requiere_revision)
+  const porRevisar = agruparCruces(c.cruces.filter((x) => x.requiere_revision))
   const editable = c.estado === 'procesada'
   const [activa, setActiva] = useState<Id>(
     c.estado === 'importada' ? 'cheques' : porRevisar.length ? 'revisar' : 'cheques',
   )
   const [origenCruce, setOrigenCruce] = useState<OrigenCruce | null>(null)
-  // montos con contraparte libre: solo ahí tiene sentido ofrecer el cruce manual
+  // solo se ofrece el cruce manual si hay contraparte libre: para una partida, un movimiento del
+  // mismo monto; para un movimiento, alguna partida de monto ≤ (varias pueden sumarlo)
   const cruzables = useMemo(() => {
     const clave = (monto: number, cargo: boolean) => `${cargo ? 'C' : 'A'}${monto}`
     const movs = new Set(c.movimientos_no_contabilizados.map((m) => clave(m.monto, m.es_cargo)))
-    const partidas = new Set(
-      [...c.cheques_pendientes, ...c.depositos_pendientes].map((p) => clave(p.monto, p.tipo === 'EGRESO')),
-    )
+    const menor = (partidas: Partida[]) =>
+      Math.min(...partidas.filter((p) => p.monto > 0).map((p) => p.monto))
+    const minimo = { cargo: menor(c.cheques_pendientes), abono: menor(c.depositos_pendientes) }
     return {
       partida: (p: Partida) => editable && movs.has(clave(p.monto, p.tipo === 'EGRESO')),
-      movimiento: (m: Movimiento) => editable && partidas.has(clave(m.monto, m.es_cargo)),
+      movimiento: (m: Movimiento) =>
+        editable && (m.es_cargo ? minimo.cargo : minimo.abono) <= m.monto,
     }
   }, [c, editable])
 
@@ -65,7 +80,7 @@ export function Revision({ c }: { c: Conciliacion }) {
     <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
       <Pestanas pestanas={pestanas} activa={activa} alCambiar={setActiva} />
       <div className="min-h-48">
-        {activa === 'revisar' && <PorRevisar c={c} cruces={porRevisar} editable={editable} />}
+        {activa === 'revisar' && <PorRevisar c={c} grupos={porRevisar} editable={editable} />}
         {activa === 'cheques' && (
           <TablaPartidas
             partidas={c.cheques_pendientes}
@@ -100,9 +115,9 @@ export function Revision({ c }: { c: Conciliacion }) {
 
 // ------------------------------------------------------------------ por revisar
 
-function PorRevisar({ c, cruces, editable }: { c: Conciliacion; cruces: Cruce[]; editable: boolean }) {
+function PorRevisar({ c, grupos, editable }: { c: Conciliacion; grupos: Cruce[][]; editable: boolean }) {
   const acciones = useAccionConciliacion(c.id)
-  if (cruces.length === 0) {
+  if (grupos.length === 0) {
     return (
       <Vacio icono={CheckCircle2} titulo="No hay cruces por revisar">
         Los cruces por nº de cheque y los de monto y fecha sin ambigüedad se aceptan solos.
@@ -123,43 +138,37 @@ function PorRevisar({ c, cruces, editable }: { c: Conciliacion; cruces: Cruce[];
             cargando={acciones.confirmarTodos.isPending}
             onClick={() =>
               acciones.confirmarTodos.mutate(undefined, {
-                onSuccess: () => toast.success(`${cruces.length} cruces confirmados`),
+                onSuccess: () => toast.success(`${grupos.length} cruces confirmados`),
                 onError: (e) => toast.error(e.message),
               })
             }
           >
-            Confirmar todos ({cruces.length})
+            Confirmar todos ({grupos.length})
           </Boton>
         )}
       </div>
       <ul className="divide-y divide-slate-100">
-        {cruces.map((x) => (
-          <TarjetaCruce key={x.id} c={c} cruce={x} editable={editable} />
+        {grupos.map((g) => (
+          <TarjetaCruce key={g[0].id} c={c} grupo={g} editable={editable} />
         ))}
       </ul>
     </div>
   )
 }
 
-function TarjetaCruce({ c, cruce, editable }: { c: Conciliacion; cruce: Cruce; editable: boolean }) {
+/** Un cruce por revisar. Si es agrupado, muestra todas sus partidas frente al único movimiento;
+ * confirmar o deshacer cualquiera de sus cruces actúa sobre todo el grupo (servidor). */
+function TarjetaCruce({ c, grupo, editable }: { c: Conciliacion; grupo: Cruce[]; editable: boolean }) {
   const acciones = useAccionConciliacion(c.id)
-  const { partida: p, movimiento: m } = cruce
+  const cruce = grupo[0]
+  const m = cruce.movimiento
+  const ids = grupo.map((x) => x.id)
+  const enCurso = (variables: number | undefined) => variables !== undefined && ids.includes(variables)
+  const nota = [...new Set(grupo.map((x) => x.nota).filter(Boolean))].join(' ')
   return (
     <li className="px-5 py-4">
       <div className="grid items-stretch gap-3 md:grid-cols-[1fr_auto_1fr]">
-        <div className="rounded-lg bg-slate-50 px-4 py-3 ring-1 ring-slate-200">
-          <p className="mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-500 uppercase">
-            Libro · {p.tipo === 'INGRESO' ? 'Ingreso' : 'Egreso'} #{p.comprobante ?? '—'}
-            <OrigenPartida p={p} />
-          </p>
-          <p className="text-sm text-slate-800">
-            <DescripcionPartida p={p} />
-          </p>
-          <p className="mt-1 flex justify-between text-sm">
-            <span className="text-slate-500">{fecha(p.fecha)}</span>
-            <strong className="monto">{pesos(p.monto)}</strong>
-          </p>
-        </div>
+        {grupo.length === 1 ? <LadoPartida p={cruce.partida} /> : <LadoGrupo grupo={grupo} />}
         <div className="flex items-center justify-center text-slate-300">
           <ArrowRightLeft className="size-5" aria-hidden />
         </div>
@@ -177,17 +186,22 @@ function TarjetaCruce({ c, cruce, editable }: { c: Conciliacion; cruce: Cruce; e
         </div>
       </div>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-amber-800">{cruce.nota}</p>
+        <p className="text-sm text-amber-800">{nota}</p>
         {editable && (
           <div className="flex gap-2">
             <Boton
               tamano="sm"
               variante="secundario"
               icono={Undo2}
-              cargando={acciones.deshacerCruce.isPending && acciones.deshacerCruce.variables === cruce.id}
+              cargando={acciones.deshacerCruce.isPending && enCurso(acciones.deshacerCruce.variables)}
               onClick={() =>
                 acciones.deshacerCruce.mutate(cruce.id, {
-                  onSuccess: () => toast('Cruce deshecho: ambos vuelven a pendientes'),
+                  onSuccess: () =>
+                    toast(
+                      grupo.length > 1
+                        ? 'Cruce deshecho: las partidas y el movimiento vuelven a pendientes'
+                        : 'Cruce deshecho: ambos vuelven a pendientes',
+                    ),
                   onError: (e) => toast.error(e.message),
                 })
               }
@@ -198,7 +212,7 @@ function TarjetaCruce({ c, cruce, editable }: { c: Conciliacion; cruce: Cruce; e
               tamano="sm"
               variante="exito"
               icono={CheckCircle2}
-              cargando={acciones.confirmarCruce.isPending && acciones.confirmarCruce.variables === cruce.id}
+              cargando={acciones.confirmarCruce.isPending && enCurso(acciones.confirmarCruce.variables)}
               onClick={() =>
                 acciones.confirmarCruce.mutate(cruce.id, { onError: (e) => toast.error(e.message) })
               }
@@ -209,6 +223,53 @@ function TarjetaCruce({ c, cruce, editable }: { c: Conciliacion; cruce: Cruce; e
         )}
       </div>
     </li>
+  )
+}
+
+function LadoPartida({ p }: { p: Partida }) {
+  return (
+    <div className="rounded-lg bg-slate-50 px-4 py-3 ring-1 ring-slate-200">
+      <p className="mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-500 uppercase">
+        Libro · {p.tipo === 'INGRESO' ? 'Ingreso' : 'Egreso'} #{p.comprobante ?? '—'}
+        <OrigenPartida p={p} />
+      </p>
+      <p className="text-sm text-slate-800">
+        <DescripcionPartida p={p} />
+      </p>
+      <p className="mt-1 flex justify-between text-sm">
+        <span className="text-slate-500">{fecha(p.fecha)}</span>
+        <strong className="monto">{pesos(p.monto)}</strong>
+      </p>
+    </div>
+  )
+}
+
+/** Lado del libro de un cruce agrupado: cada partida y el total, que es el monto del movimiento. */
+function LadoGrupo({ grupo }: { grupo: Cruce[] }) {
+  const tipo = grupo[0].partida.tipo === 'INGRESO' ? 'Ingresos' : 'Egresos'
+  const total = grupo.reduce((t, x) => t + x.partida.monto, 0)
+  return (
+    <div className="rounded-lg bg-slate-50 px-4 py-3 ring-1 ring-slate-200">
+      <p className="mb-1 text-xs font-medium tracking-wide text-slate-500 uppercase">
+        Libro · {tipo} · {grupo.length} partidas · Grupo {grupo[0].grupo}
+      </p>
+      <ul className="divide-y divide-slate-200/70 text-sm">
+        {grupo.map(({ partida: p }) => (
+          <li key={p.id} className="flex items-baseline justify-between gap-3 py-1">
+            <span className="min-w-0 text-slate-800">
+              <span className="font-medium">#{p.comprobante ?? '—'}</span>
+              <span className="text-slate-500"> · {fecha(p.fecha)} · </span>
+              <DescripcionPartida p={p} /> <OrigenPartida p={p} />
+            </span>
+            <span className="monto shrink-0">{pesos(p.monto)}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1 flex justify-between border-t border-slate-300 pt-1 text-sm">
+        <span className="text-slate-500">Total</span>
+        <strong className="monto">{pesos(total)}</strong>
+      </p>
+    </div>
   )
 }
 
@@ -328,10 +389,12 @@ function TodosLosCruces({ c, editable }: { c: Conciliacion; editable: boolean })
   const acciones = useAccionConciliacion(c.id)
   const [busqueda, setBusqueda] = useState('')
   const filtrados = useMemo(() => {
+    // las filas de un mismo grupo van juntas
+    const cruces = agruparCruces(c.cruces).flat()
     const q = busqueda.trim().toLowerCase()
-    if (!q) return c.cruces
-    return c.cruces.filter((x) =>
-      [x.partida.comprobante, x.partida.glosa, x.partida.depto, x.partida.cheque, x.movimiento.descripcion, x.movimiento.documento, x.partida.monto]
+    if (!q) return cruces
+    return cruces.filter((x) =>
+      [x.partida.comprobante, x.partida.glosa, x.partida.depto, x.partida.cheque, x.movimiento.descripcion, x.movimiento.documento, x.partida.monto, x.grupo]
         .join(' ')
         .toLowerCase()
         .includes(q),
@@ -378,6 +441,7 @@ function TodosLosCruces({ c, editable }: { c: Conciliacion; editable: boolean })
             <Celda>
               <div className="flex flex-col items-start gap-1">
                 <InsigniaTipoCruce tipo={x.tipo} />
+                {x.grupo && <Insignia tono="gris">Grupo {x.grupo}</Insignia>}
                 {x.confirmado && x.confirmado_por && (
                   <span className="text-xs text-slate-500">Confirmó {x.confirmado_por}</span>
                 )}
@@ -389,9 +453,10 @@ function TodosLosCruces({ c, editable }: { c: Conciliacion; editable: boolean })
                   tamano="sm"
                   variante="fantasma"
                   icono={Undo2}
+                  title={x.grupo ? `Deshace todo el grupo ${x.grupo}` : undefined}
                   onClick={() =>
                     acciones.deshacerCruce.mutate(x.id, {
-                      onSuccess: () => toast('Cruce deshecho'),
+                      onSuccess: () => toast(x.grupo ? `Grupo ${x.grupo} deshecho` : 'Cruce deshecho'),
                       onError: (e) => toast.error(e.message),
                     })
                   }

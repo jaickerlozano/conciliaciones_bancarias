@@ -184,7 +184,8 @@ export function useAccionConciliacion(id: number) {
       ...opciones,
     }),
     cruzarManual: useMutation({
-      mutationFn: (d: { partida: number; movimiento: number }) => post('/cruces/', d),
+      // una partida (1:1) o varias que suman el movimiento (cruce agrupado)
+      mutationFn: (d: { partidas: number[]; movimiento: number }) => post('/cruces/', d),
       ...opciones,
     }),
     redondeo: useMutation({

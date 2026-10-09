@@ -69,6 +69,7 @@ class CruceSerializer(serializers.ModelSerializer):
             "confirmado_por",
             "confirmado_en",
             "requiere_revision",
+            "grupo",
             "partida",
             "movimiento",
         ]
@@ -178,7 +179,7 @@ class ConciliacionDetalleSerializer(ConciliacionSerializer):
         return self._pendientes(obj, TipoPartida.INGRESO)
 
     def get_movimientos_no_contabilizados(self, obj):
-        qs = obj.movimientos.filter(cruce__isnull=True).exclude(origen=OrigenMovimiento.REPETIDO)
+        qs = obj.movimientos.filter(cruces__isnull=True).exclude(origen=OrigenMovimiento.REPETIDO)
         return MovimientoSerializer(qs, many=True).data
 
     def get_movimientos_repetidos(self, obj):
@@ -210,8 +211,22 @@ class SubirArchivoSerializer(serializers.Serializer):
 
 
 class CruceManualSerializer(serializers.Serializer):
-    partida = serializers.IntegerField()
+    """`{partida, movimiento}` (1:1) o `{partidas: [ids], movimiento}` (cruce agrupado)."""
+
+    partida = serializers.IntegerField(required=False)
+    partidas = serializers.ListField(
+        child=serializers.IntegerField(), required=False, min_length=1, max_length=50
+    )
     movimiento = serializers.IntegerField()
+
+    def validate(self, datos):
+        ids = list(datos.get("partidas") or [])
+        if "partida" in datos:
+            ids.append(datos["partida"])
+        if not ids:
+            raise serializers.ValidationError("Indique la partida o las partidas a cruzar.")
+        datos["ids_partidas"] = list(dict.fromkeys(ids))  # sin repetidos, en orden
+        return datos
 
 
 class _ChequePendienteSerializer(serializers.Serializer):

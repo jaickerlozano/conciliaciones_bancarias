@@ -3,7 +3,7 @@ import { render } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import { MemoryRouter } from 'react-router'
 
-import type { Conciliacion } from '../api/tipos'
+import type { Conciliacion, Cruce, Movimiento, Partida } from '../api/tipos'
 
 export function renderizar(ui: ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -54,6 +54,56 @@ export function conciliacionMayo(cambios: Partial<Conciliacion> = {}): Conciliac
     cruces: [],
     archivos: [],
     eventos: [],
+    ...cambios,
+  }
+}
+
+let siguienteId = 1000
+
+/** Partida del libro (por defecto, ingreso del período). */
+export function partida(cambios: Partial<Partida> = {}): Partida {
+  return {
+    id: siguienteId++,
+    tipo: 'INGRESO',
+    origen: 'periodo',
+    comprobante: 1,
+    fecha: '2026-05-10',
+    monto: 100000,
+    glosa: '',
+    depto: '101',
+    cheque: '',
+    ...cambios,
+  }
+}
+
+/** Movimiento de la cartola (por defecto, abono del período). */
+export function movimiento(cambios: Partial<Movimiento> = {}): Movimiento {
+  return {
+    id: siguienteId++,
+    origen: 'periodo',
+    fecha: '2026-05-10',
+    descripcion: 'TRANSFERENCIA',
+    monto: 100000,
+    es_cargo: false,
+    documento: '',
+    sucursal: '',
+    ...cambios,
+  }
+}
+
+/** Cruce sugerido (por revisar) entre una partida y un movimiento. */
+export function cruce(p: Partida, m: Movimiento, cambios: Partial<Cruce> = {}): Cruce {
+  return {
+    id: siguienteId++,
+    tipo: 'sugerido',
+    nota: '',
+    grupo: '',
+    confirmado: false,
+    confirmado_por: null,
+    confirmado_en: null,
+    requiere_revision: true,
+    partida: p,
+    movimiento: m,
     ...cambios,
   }
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
@@ -12,6 +13,7 @@ from apps.conciliaciones.models import (
     Conciliacion,
     EstadoConciliacion,
     OrigenMovimiento,
+    Partida,
     TipoPartida,
 )
 from motor.texto import NOMBRE_MES
@@ -25,6 +27,7 @@ TIPOS_CRUCE = {
     "cheque": "Nº de cheque",
     "monto_fecha": "Monto y fecha",
     "sugerido": "Sugerido",
+    "agrupado": "Agrupado",
     "manual": "Manual",
 }
 
@@ -163,7 +166,7 @@ def armar_informe(c: Conciliacion, usuario=None) -> InformeConciliacion:
             )
 
     sin_cruce = (
-        c.movimientos.filter(cruce__isnull=True)
+        c.movimientos.filter(cruces__isnull=True)
         .exclude(origen=OrigenMovimiento.REPETIDO)
         .order_by("fecha", "id")
     )
@@ -181,7 +184,8 @@ def armar_informe(c: Conciliacion, usuario=None) -> InformeConciliacion:
     cruces = c.cruces.select_related("partida", "movimiento", "confirmado_por").order_by(
         "movimiento__fecha", "movimiento__id"
     )
-    por_movimiento: dict[int, str] = {}
+    # un movimiento puede estar cruzado con varias partidas (cruce agrupado)
+    por_movimiento: dict[int, list[Partida]] = defaultdict(list)
     for x in cruces:
         p, m = x.partida, x.movimiento
         informe.cruces.append(
@@ -197,7 +201,7 @@ def armar_informe(c: Conciliacion, usuario=None) -> InformeConciliacion:
                 confirmado_por=_nombre_usuario(x.confirmado_por),
             )
         )
-        por_movimiento[m.id] = f"Cruzado con {p.get_tipo_display().lower()} #{p.comprobante}"
+        por_movimiento[m.id].append(p)
 
     de_la_cartola = c.movimientos.filter(
         origen__in=[OrigenMovimiento.PERIODO, OrigenMovimiento.REPETIDO]
@@ -205,8 +209,10 @@ def armar_informe(c: Conciliacion, usuario=None) -> InformeConciliacion:
     for m in de_la_cartola:
         if m.origen == OrigenMovimiento.REPETIDO:
             estado = "Repetido de la cartola anterior"
+        elif m.id in por_movimiento:
+            estado = _estado_cruzado(por_movimiento[m.id])
         else:
-            estado = por_movimiento.get(m.id, "No contabilizado")
+            estado = "No contabilizado"
         informe.cartola.append(
             FilaCartola(
                 m.fecha,
@@ -218,3 +224,11 @@ def armar_informe(c: Conciliacion, usuario=None) -> InformeConciliacion:
             )
         )
     return informe
+
+
+def _estado_cruzado(partidas: list[Partida]) -> str:
+    """Estado en la cartola: 'Cruzado con ingreso #1210' o, si es un cruce agrupado,
+    'Cruzado con ingresos #34917, #34918'."""
+    tipo = partidas[0].get_tipo_display().lower()
+    comprobantes = ", ".join(f"#{p.comprobante}" for p in partidas)
+    return f"Cruzado con {tipo}{'s' if len(partidas) > 1 else ''} {comprobantes}"

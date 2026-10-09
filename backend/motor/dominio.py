@@ -21,6 +21,9 @@ class TipoPartida(StrEnum):
 class Origen(StrEnum):
     PERIODO = "periodo"  # registrado/movido en el período que se concilia
     ARRASTRE = "arrastre"  # pendiente heredado de conciliaciones anteriores
+    # diferencia entre lo registrado y lo cobrado de un cheque cruzado por número; queda
+    # pendiente (y se arrastra) hasta que se resuelva
+    DIFERENCIA = "diferencia"
 
 
 @dataclass(frozen=True)
@@ -132,6 +135,7 @@ class TipoCruce(StrEnum):
     CHEQUE = "cheque"  # nº de cheque idéntico al nº de documento del banco
     MONTO_FECHA = "monto_fecha"  # mismo monto y fecha cercana, sin ambigüedad
     SUGERIDO = "sugerido"  # mismo monto pero con ambigüedad o fecha lejana: revisar
+    AGRUPADO = "agrupado"  # varias partidas suman un solo movimiento: revisar siempre
 
 
 @dataclass
@@ -140,10 +144,12 @@ class Cruce:
     movimiento: MovimientoBancario
     tipo: TipoCruce
     nota: str = ""
+    # identifica los cruces de un mismo grupo (varias partidas -> un movimiento); vacío si 1:1
+    grupo: str = ""
 
     @property
     def requiere_revision(self) -> bool:
-        return self.tipo == TipoCruce.SUGERIDO or bool(self.nota)
+        return self.tipo in (TipoCruce.SUGERIDO, TipoCruce.AGRUPADO) or bool(self.nota)
 
 
 @dataclass
