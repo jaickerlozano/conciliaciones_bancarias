@@ -5,6 +5,8 @@ from motor.parsers.cartolas import (  # noqa: F401
     bci_pdf,
     plantilla,
     santander_pdf,
+    scotiabank_cc_pdf,
+    scotiabank_pdf,
 )
 from motor.parsers.cartolas.base import ErrorCartola, leer_cartola, parsers_disponibles
 

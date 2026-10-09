@@ -27,4 +27,4 @@ pnpm dev                              # panel en http://localhost:5180
 ```
 
 Los tests y el comando `cargar_piloto` buscan los archivos reales del cliente en
-`../ingresos_egresos_cartolas/` y `../bustos/` (o en `$CONCILIACION_DATOS_DIR` / `$CONCILIACION_BUSTOS_DIR`); los tests se omiten si no están.
+`../cinema/` y `../bustos/` (o en `$CONCILIACION_DATOS_DIR` / `$CONCILIACION_BUSTOS_DIR`); los tests se omiten si no están.
