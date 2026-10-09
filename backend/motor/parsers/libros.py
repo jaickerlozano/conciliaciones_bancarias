@@ -1,6 +1,7 @@
 """Parser de las planillas de ingresos y egresos del cliente.
 
-Las planillas son un listado acumulado. Cada mes termina con una fila "CIERRE MES <MES> <AÑO>";
+Las planillas son un listado acumulado. Cada mes termina con una fila "CIERRE MES <MES> <AÑO>"
+(o "CIERRE MES DE <MES> DE <AÑO>", "CIERRE DE <MES>´<AA>"…);
 el período de una partida lo define el bloque en que está, NO su fecha (hay ingresos con fecha
 de junio dentro del bloque de mayo). Las filas posteriores al último cierre forman el período
 abierto (el siguiente al último cierre).
@@ -29,7 +30,7 @@ HOJA_POR_DEFECTO = {
 ALIAS_COLUMNAS = {
     "fecha": ("FECHA",),
     "concepto": ("CONCEPTO",),
-    "comprobante": ("COMPROBANTE", "COMPROB", "COMPROB."),
+    "comprobante": ("COMPROBANTE", "COMPROB", "COMPROB.", "COMP", "COMP."),
     "torre": ("TORRE",),
     "depto": ("DEPTO", "DEPARTAMENTO"),
     "detalle": ("DETALLE", "DETALE"),
@@ -78,9 +79,28 @@ def _mapear_columnas(fila: tuple) -> dict[str, int]:
     return columnas
 
 
-def _fila_cierre(fila: tuple) -> str | None:
+CONCEPTOS_PARTIDA = {"INGRESO", "INGRESOS", "EGRESO", "EGRESOS"}
+
+
+def _fila_cierre(fila: tuple, columnas: dict[str, int]) -> str | None:
+    """Etiqueta del cierre si la fila es un "CIERRE MES …"; si no, None.
+
+    La etiqueta debe EMPEZAR por "CIERRE" (la celda varía según la planilla: CONCEPTO,
+    COMPROBANTE o DETALLE), así una glosa como "…, CIERRE PORTÓN" no corta el bloque. Una fila
+    con concepto INGRESO/EGRESO y nº de comprobante es una partida aunque su glosa empiece por
+    "CIERRE"; en cambio, hay cierres con concepto EGRESO y la etiqueta en COMPROBANTE (Cinema).
+    """
+
+    def valor(campo: str):
+        idx = columnas[campo]
+        return fila[idx] if idx < len(fila) else None
+
+    if normalizar(valor("concepto")) in CONCEPTOS_PARTIDA and isinstance(
+        valor("comprobante"), int | float
+    ):
+        return None
     for celda in fila:
-        if isinstance(celda, str) and "CIERRE" in normalizar(celda):
+        if isinstance(celda, str) and normalizar(celda).startswith("CIERRE"):
             return celda
     return None
 
@@ -121,11 +141,12 @@ def _procesar_filas(filas, tipo: TipoPartida, nombre_archivo: str) -> LibroConta
                     f"{nombre_archivo}: no se encontró la fila de encabezados (FECHA, CONCEPTO…)."
                 )
             candidatas = _mapear_columnas(fila)
-            if {"fecha", "concepto", "comprobante", campo_monto} <= candidatas.keys():
+            claves = candidatas.keys()
+            if {"fecha", "concepto", "comprobante"} <= claves and ({"debe", "haber"} & claves):
                 columnas = candidatas
             continue
 
-        etiqueta = _fila_cierre(fila)
+        etiqueta = _fila_cierre(fila, columnas)
         if etiqueta is not None:
             mes_anio = extraer_mes_anio(etiqueta)
             if mes_anio is None:
@@ -199,7 +220,18 @@ def _leer_partida(
     except (TypeError, ValueError):
         comprobante = None
 
-    bruto = celda(campo_monto)
+    # Ingresos en DEBE y egresos en HABER; algunas planillas (ej. ingresos de General Córdova)
+    # usan la otra columna, así que si la esperada viene vacía se toma la otra.
+    otro_campo = "haber" if campo_monto == "debe" else "debe"
+    bruto, otro = celda(campo_monto), celda(otro_campo)
+    otro_con_monto = isinstance(otro, int | float) and otro != 0
+    if bruto in (None, "", 0) and otro_con_monto:
+        bruto = otro
+    elif otro_con_monto and isinstance(bruto, int | float):
+        libro.advertencias.append(
+            f"Fila {nro_fila}: comprobante {comprobante} tiene monto en DEBE y en HABER; "
+            f"se usa {campo_monto.upper()} ({fmt_clp(a_pesos(bruto)[0])}). Revise la planilla."
+        )
     if bruto in (None, "") or not isinstance(bruto, int | float):
         if bruto not in (None, ""):
             libro.advertencias.append(
